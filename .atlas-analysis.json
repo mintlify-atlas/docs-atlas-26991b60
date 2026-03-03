@@ -1,0 +1,154 @@
+{
+  "projectType": "saas",
+  "projectName": "PayOnProof",
+  "projectDescription": "Payment routing platform that aggregates multiple Stellar Anchors to execute cross-border payments at optimal rates for SMEs and freelancers in LATAM.",
+  "theme": "palm",
+  "primaryColor": "#7B5EFF",
+  "lightColor": "#A78BFF",
+  "darkColor": "#5B3FD9",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "how-it-works"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/route-comparison",
+              "features/payment-execution",
+              "features/proof-generation",
+              "features/anchor-management"
+            ]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "guides/sending-payments",
+              "guides/connecting-wallet",
+              "guides/verifying-proofs",
+              "guides/understanding-fees"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/frontend",
+              "architecture/backend",
+              "architecture/stellar-integration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Anchors",
+            "pages": [
+              "api/anchors/compare-routes",
+              "api/anchors/countries",
+              "api/anchors/catalog",
+              "api/anchors/capabilities"
+            ]
+          },
+          {
+            "group": "Remittances",
+            "pages": [
+              "api/remittances/execute-transfer"
+            ]
+          },
+          {
+            "group": "Proofs",
+            "pages": [
+              "api/proofs/generate"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "api/operations/health",
+              "api/operations/diagnostics"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "deployment/local-development",
+              "deployment/environment-variables",
+              "deployment/database-setup"
+            ]
+          },
+          {
+            "group": "Production",
+            "pages": [
+              "deployment/vercel-deployment",
+              "deployment/anchor-catalog-sync",
+              "deployment/monitoring"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Stellar Integration",
+        "groups": [
+          {
+            "group": "Standards",
+            "pages": [
+              "stellar/sep-overview",
+              "stellar/sep24",
+              "stellar/sep31",
+              "stellar/sep10"
+            ]
+          },
+          {
+            "group": "Implementation",
+            "pages": [
+              "stellar/horizon-integration",
+              "stellar/asset-management",
+              "stellar/transaction-signing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-anchor payment routing with real-time rate comparison",
+    "Automated Stellar anchor discovery and capability management",
+    "Cross-border payment execution via SEP-24 and SEP-31",
+    "Blockchain-based payment proof generation and verification",
+    "Transparent fee calculation and cost optimization",
+    "Freighter wallet integration for Stellar transactions"
+  ],
+  "publicApiSurface": [
+    "POST /api/compare-routes - Compare payment routes across anchors",
+    "POST /api/remittances/execute-transfer - Execute cross-border payment",
+    "POST /api/proofs/generate - Generate payment proof",
+    "GET /api/anchors/countries - Get supported countries",
+    "GET /api/anchors/catalog - Query anchor catalog",
+    "POST /api/anchors/capabilities/refresh - Refresh anchor capabilities",
+    "GET /api/anchors/diagnostics - Get anchor system diagnostics",
+    "GET /api/health - API health check"
+  ]
+}
