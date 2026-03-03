@@ -14,24 +14,22 @@ curl -X POST "https://api.payonproof.com/api/anchors/ops?action=sync&secret=YOUR
 ```
 
 ```bash cURL (refresh capabilities)
-curl -X POST https://api.payonproof.com/api/anchors/ops \
+curl -X POST "https://api.payonproof.com/api/anchors/ops?secret=YOUR_CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
     "action": "refresh_capabilities",
     "limit": 100
-  }' \
-  "?secret=YOUR_CRON_SECRET"
+  }'
 ```
 
 ```bash cURL (import directory)
-curl -X POST https://api.payonproof.com/api/anchors/ops \
+curl -X POST "https://api.payonproof.com/api/anchors/ops?secret=YOUR_CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
     "action": "import_directory",
     "downloadUrl": "https://anchors.stellar.org/anchors.json",
     "dryRun": false
-  }' \
-  "?secret=YOUR_CRON_SECRET"
+  }'
 ```
 
 </RequestExample>
