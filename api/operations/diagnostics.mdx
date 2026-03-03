@@ -1,0 +1,396 @@
+---
+title: Diagnostics
+description: Test and diagnose anchor capabilities (SEP-1, SEP-6, SEP-10, SEP-24)
+---
+
+<Note>
+This is a diagnostic tool for testing anchor integrations. Use during development and troubleshooting.
+</Note>
+
+<RequestExample>
+
+```bash cURL (SEP-1 discovery)
+curl -X POST https://api.payonproof.com/api/anchors/diagnostics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "sep1_discover",
+    "domain": "stellar.moneygram.com"
+  }'
+```
+
+```bash cURL (SEP-24 info)
+curl -X POST https://api.payonproof.com/api/anchors/diagnostics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "sep24_info",
+    "domain": "stellar.moneygram.com"
+  }'
+```
+
+```bash cURL (SEP-10 token)
+curl -X POST https://api.payonproof.com/api/anchors/diagnostics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "sep10_token",
+    "domain": "stellar.moneygram.com"
+  }'
+```
+
+```bash cURL (capabilities resolve)
+curl -X POST https://api.payonproof.com/api/anchors/diagnostics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "capabilities_resolve",
+    "domain": "stellar.moneygram.com",
+    "assetCode": "USDC"
+  }'
+```
+
+</RequestExample>
+
+## POST /api/anchors/diagnostics
+
+Diagnostic endpoint for testing anchor capabilities and SEP protocol implementations.
+
+### Request body
+
+<ParamField body="action" type="string" required>
+  Diagnostic action: `sep1_discover`, `sep24_info`, `sep6_info`, `sep10_token`, or `capabilities_resolve`
+</ParamField>
+
+---
+
+## Action: sep1_discover
+
+Discover anchor endpoints from stellar.toml (SEP-1).
+
+### Request parameters
+
+<ParamField body="domain" type="string" required>
+  Anchor domain (e.g., "stellar.moneygram.com")
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "action": "sep1_discover",
+  "discovered": {
+    "domain": "stellar.moneygram.com",
+    "stellarTomlUrl": "https://stellar.moneygram.com/.well-known/stellar.toml",
+    "webAuthEndpoint": "https://stellar.moneygram.com/auth",
+    "transferServerSep24": "https://stellar.moneygram.com/sep24",
+    "transferServerSep6": null,
+    "directPaymentServer": null,
+    "kycServer": null
+  }
+}
+```
+
+---
+
+## Action: sep24_info
+
+Fetch SEP-24 /info endpoint (deposit/withdraw asset support).
+
+### Request parameters
+
+<ParamField body="domain" type="string">
+  Anchor domain (used for SEP-1 discovery if transferServerSep24 not provided)
+</ParamField>
+
+<ParamField body="transferServerSep24" type="string">
+  Direct SEP-24 transfer server URL (alternative to domain)
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "action": "sep24_info",
+  "mode": "sep24",
+  "info": {
+    "deposit": {
+      "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": {
+        "enabled": true,
+        "fee_fixed": 0,
+        "fee_percent": 0,
+        "min_amount": 1,
+        "max_amount": 10000
+      }
+    },
+    "withdraw": {
+      "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": {
+        "enabled": true,
+        "fee_fixed": 0,
+        "fee_percent": 0
+      }
+    }
+  },
+  "capabilities": {
+    "sep24": true,
+    "sep6": false,
+    "sep31": false,
+    "sep10": true
+  }
+}
+```
+
+### Fallback response (SEP-24 not available)
+
+If SEP-24 is not available, falls back to SEP-1 discovery:
+
+```json
+{
+  "status": "degraded",
+  "action": "sep24_info",
+  "mode": "fallback-sep1",
+  "message": "Anchor does not expose SEP-24. Returning SEP-1 capabilities as fallback.",
+  "capabilities": {
+    "sep24": false,
+    "sep6": true,
+    "sep31": false,
+    "sep10": true
+  },
+  "discovered": {
+    "domain": "anchor.example.com",
+    "webAuthEndpoint": "https://anchor.example.com/auth",
+    "transferServerSep6": "https://anchor.example.com/sep6"
+  }
+}
+```
+
+---
+
+## Action: sep6_info
+
+Fetch SEP-6 /info endpoint (programmatic deposits/withdrawals).
+
+### Request parameters
+
+<ParamField body="domain" type="string">
+  Anchor domain (used for SEP-1 discovery if transferServerSep6 not provided)
+</ParamField>
+
+<ParamField body="transferServerSep6" type="string">
+  Direct SEP-6 transfer server URL
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "action": "sep6_info",
+  "mode": "sep6",
+  "info": {
+    "deposit": {
+      "USD": {
+        "enabled": true,
+        "fields": {
+          "email_address": { "description": "Email address", "optional": false },
+          "amount": { "description": "Amount to deposit", "optional": false }
+        }
+      }
+    },
+    "withdraw": {
+      "USD": {
+        "enabled": true,
+        "fields": {
+          "dest": { "description": "Bank account number", "optional": false }
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## Action: sep10_token
+
+Request SEP-10 authentication token (requires signing with escrow secret).
+
+<Warning>
+Requires `STELLAR_ESCROW_SECRET` environment variable. This action signs challenges server-side.
+</Warning>
+
+### Request parameters
+
+<ParamField body="domain" type="string">
+  Anchor domain (for SEP-1 discovery)
+</ParamField>
+
+<ParamField body="webAuthEndpoint" type="string">
+  Direct SEP-10 web auth endpoint
+</ParamField>
+
+<ParamField body="serverSigningKey" type="string">
+  Anchor's signing public key (optional, from stellar.toml)
+</ParamField>
+
+<ParamField body="accountPublicKey" type="string">
+  Account to authenticate (defaults to escrow account)
+</ParamField>
+
+<ParamField body="homeDomain" type="string">
+  Home domain to include in challenge request
+</ParamField>
+
+<ParamField body="clientDomain" type="string">
+  Client domain for SEP-10 authentication
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "action": "sep10_token",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+---
+
+## Action: capabilities_resolve
+
+Resolve complete anchor capabilities (SEP-1, SEP-10, SEP-24, fees, endpoints).
+
+### Request parameters
+
+<ParamField body="domain" type="string" required>
+  Anchor domain
+</ParamField>
+
+<ParamField body="assetCode" type="string" default="USD">
+  Asset code to check capabilities for
+</ParamField>
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "action": "capabilities_resolve",
+  "capabilities": {
+    "sep": {
+      "sep10": true,
+      "sep24": true,
+      "sep6": false,
+      "sep31": false
+    },
+    "endpoints": {
+      "webAuthEndpoint": "https://stellar.moneygram.com/auth",
+      "transferServerSep24": "https://stellar.moneygram.com/sep24",
+      "transferServerSep6": null,
+      "directPaymentServer": null,
+      "kycServer": null
+    },
+    "fees": {
+      "fixed": 0,
+      "percent": 0,
+      "source": "sep24_info"
+    },
+    "diagnostics": [],
+    "raw": {
+      "sep24Info": { ... },
+      "stellarToml": { ... }
+    }
+  }
+}
+```
+
+---
+
+## Error responses
+
+**400 Bad Request - Invalid action**
+
+```json
+{
+  "error": "Invalid action. Use: sep1_discover | sep24_info | sep6_info | sep10_token | capabilities_resolve"
+}
+```
+
+**400 Bad Request - Missing domain**
+
+```json
+{
+  "error": "Missing field: domain"
+}
+```
+
+**400 Bad Request - Missing escrow secret**
+
+```json
+{
+  "error": "Missing STELLAR_ESCROW_SECRET in backend env. Required for SEP-10 signing."
+}
+```
+
+**502 Bad Gateway - Anchor unreachable**
+
+```json
+{
+  "status": "error",
+  "action": "sep1_discover",
+  "error": "stellar.toml not found at https://anchor.example.com/.well-known/stellar.toml (404)"
+}
+```
+
+## Use cases
+
+### Test anchor before adding to catalog
+
+```bash
+# 1. Check SEP-1 discovery
+curl -X POST /api/anchors/diagnostics \
+  -d '{"action": "sep1_discover", "domain": "new-anchor.com"}'
+
+# 2. Verify SEP-24 support
+curl -X POST /api/anchors/diagnostics \
+  -d '{"action": "sep24_info", "domain": "new-anchor.com"}'
+
+# 3. Test authentication
+curl -X POST /api/anchors/diagnostics \
+  -d '{"action": "sep10_token", "domain": "new-anchor.com"}'
+
+# 4. Get full capabilities
+curl -X POST /api/anchors/diagnostics \
+  -d '{"action": "capabilities_resolve", "domain": "new-anchor.com", "assetCode": "USD"}'
+```
+
+### Debug integration issues
+
+```javascript
+async function debugAnchor(domain) {
+  const actions = ['sep1_discover', 'sep24_info', 'capabilities_resolve'];
+  
+  for (const action of actions) {
+    const response = await fetch('/api/anchors/diagnostics', {
+      method: 'POST',
+      body: JSON.stringify({ action, domain })
+    });
+    
+    const result = await response.json();
+    console.log(`${action}:`, result.status);
+    
+    if (result.status === 'error') {
+      console.error('Error:', result.error);
+    }
+  }
+}
+
+debugAnchor('stellar.moneygram.com');
+```
+
+## Implementation notes
+
+- SEP-10 token generation uses `STELLAR_ESCROW_SECRET` for signing
+- Diagnostics bypass caching to ensure fresh results
+- Fallback logic tries SEP-1 discovery if SEP-24 info fails
+- All actions return detailed error messages for troubleshooting
+- Does not modify database (read-only diagnostic operations)

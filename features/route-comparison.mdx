@@ -1,0 +1,299 @@
+---
+title: Route comparison
+description: Compare multiple cross-border payment routes in real-time to find the best rates and fees for your transfer
+---
+
+PayOnProof's route comparison engine queries multiple Stellar anchors simultaneously to give you transparent, real-time pricing for cross-border payments.
+
+## How route comparison works
+
+When you initiate a transfer, PayOnProof searches for available routes between your origin and destination countries:
+
+1. **Query anchor catalog** - The system queries active anchors from the database that support your corridor
+2. **Fetch capabilities** - For each anchor, PayOnProof validates SEP-24, SEP-6, and SEP-31 support via their `stellar.toml`
+3. **Calculate routes** - The engine pairs on-ramp anchors (origin) with off-ramp anchors (destination)
+4. **Score and rank** - Routes are scored based on fees, speed, and operational status
+
+<Note>
+Routes are generated dynamically based on real anchor availability. If no anchors support your corridor, the API will return an empty routes array with a diagnostic reason.
+</Note>
+
+## Route scoring algorithm
+
+PayOnProof uses a multi-factor scoring system to recommend the best route:
+
+```typescript
+// From services/api/lib/remittances/compare/scoring.ts
+function scoreRoute(route: RemittanceRoute): number {
+  let score = 0;
+  
+  // Lower fees = higher score
+  const feeScore = Math.max(0, 100 - route.feePercentage * 10);
+  score += feeScore * 0.5;
+  
+  // Faster settlement = higher score  
+  const speedScore = Math.max(0, 100 - route.estimatedMinutes);
+  score += speedScore * 0.3;
+  
+  // Operational status boost
+  if (route.available) score += 20;
+  
+  return score;
+}
+```
+
+### Scoring factors
+
+- **Fee percentage** (50% weight) - Routes with lower fees score higher
+- **Speed** (30% weight) - Faster estimated settlement times increase score
+- **Availability** (20% weight) - Operational anchors with valid SEP endpoints get a bonus
+
+## Real code example
+
+Here's how the route comparison API works under the hood:
+
+```typescript services/api/api/compare-routes.ts
+import { parseCompareRoutesInput } from "../lib/remittances/compare/schema.js";
+import { compareRoutesWithAnchors } from "../lib/remittances/compare/service.js";
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const parsed = readJsonBody(req);
+  const parsedInput = parseCompareRoutesInput(parsed.value);
+  
+  if (!parsedInput.ok) {
+    return res.status(400).json({ error: parsedInput.error });
+  }
+
+  const result = await compareRoutesWithAnchors(parsedInput.value);
+  return res.status(200).json(result);
+}
+```
+
+```typescript services/api/lib/remittances/compare/service.ts
+export async function compareRoutesWithAnchors(input: CompareRoutesInput) {
+  const anchors = await getAnchorsForCorridor({
+    origin: input.origin,
+    destination: input.destination,
+  });
+
+  const runtimes = await Promise.all(anchors.map(resolveAnchorRuntime));
+  const originAnchors = runtimes.filter(r => r.catalog.type === "on-ramp" && r.operational);
+  const destinationAnchors = runtimes.filter(r => r.catalog.type === "off-ramp" && r.operational);
+
+  const routes: RemittanceRoute[] = [];
+  const exchangeRate = await getFxRate(
+    originAnchors[0].catalog.currency,
+    destinationAnchors[0].catalog.currency
+  );
+
+  for (const originAnchor of originAnchors) {
+    for (const destinationAnchor of destinationAnchors) {
+      routes.push(buildRoute(input, originAnchor, destinationAnchor, exchangeRate));
+    }
+  }
+
+  const scored = scoreRoutes(routes).slice(0, MAX_ROUTES);
+  return { routes: scored, meta: { /* diagnostics */ } };
+}
+```
+
+<Info>
+The comparison service runs capability checks in parallel to minimize latency. Anchor capabilities are cached for 10 minutes to reduce redundant SEP-1 lookups.
+</Info>
+
+## UI flow
+
+Users interact with route comparison through a three-step interface:
+
+### Step 1: Search form
+
+Users select origin country, destination country, and amount:
+
+<CardGroup cols={2}>
+  <Card title="Country selection" icon="globe">
+    Countries are populated from `/api/anchors/countries`, which returns only countries with active anchors in the catalog.
+  </Card>
+  <Card title="Amount input" icon="dollar-sign">
+    Asset codes (USDC, XLM) vary per route. The form shows "Varies" to indicate this.
+  </Card>
+</CardGroup>
+
+### Step 2: Route cards
+
+After search, you see all available routes with:
+
+- **Origin and destination anchors** - Clear provider names
+- **Fee breakdown** - On-ramp fee + bridge fee (0.2%) + off-ramp fee
+- **Exchange rate** - Real-time FX rate for the corridor
+- **Estimated time** - Settlement time in minutes
+- **Received amount** - Exact amount recipient gets after all fees
+
+```tsx services/web/components/route-card.tsx
+<div className="route-card">
+  <div className="route-header">
+    <Badge>{route.recommended ? "Best" : "Available"}</Badge>
+    <span>{route.originAnchor.name} → {route.destinationAnchor.name}</span>
+  </div>
+  <div className="route-metrics">
+    <Metric label="Fee" value={`${route.feePercentage}%`} />
+    <Metric label="Rate" value={route.exchangeRate} />
+    <Metric label="Time" value={route.estimatedTime} />
+    <Metric label="You get" value={route.receivedAmount} highlight />
+  </div>
+  <Button onClick={() => handleSelect(route)}>Select Route</Button>
+</div>
+```
+
+### Step 3: Sort and filter
+
+You can sort routes by:
+
+- **Best** (recommended) - Highest scored route based on the algorithm
+- **Cheapest** - Lowest fee percentage
+- **Fastest** - Shortest estimated settlement time
+
+<Tip>
+The "Best" option balances cost and speed. If you're price-sensitive, use "Cheapest". If speed matters, use "Fastest".
+</Tip>
+
+## Fee transparency
+
+Every route shows a complete fee breakdown:
+
+```typescript
+interface FeeBreakdown {
+  onRamp: number;      // Origin anchor fee (e.g., 0.8%)
+  bridge: number;      // PayOnProof bridge fee (0.2%)
+  offRamp: number;     // Destination anchor fee (e.g., 1.2%)
+}
+```
+
+**Example calculation:**
+
+- You send: 500 USDC
+- On-ramp fee: 0.8% (4 USDC)
+- Bridge fee: 0.2% (1 USDC)  
+- Off-ramp fee: 1.2% (6 USDC)
+- **Total fee: 2.2% (11 USDC)**
+- **Recipient gets: 489 USDC**
+
+<Note>
+If an anchor doesn't publish fee information in their SEP-24/SEP-6 `/info` endpoint, PayOnProof uses a fallback estimated fee (default 1.5%) and marks it as "estimated" in diagnostics.
+</Note>
+
+## API request/response
+
+### Request
+
+```bash
+POST /api/compare-routes
+Content-Type: application/json
+
+{
+  "origin": "US",
+  "destination": "MX",
+  "amount": 500
+}
+```
+
+### Response
+
+```json
+{
+  "routes": [
+    {
+      "id": "route-anchor1-anchor2-1234567890",
+      "originAnchor": {
+        "id": "moneygram.com:on-ramp:US:USDC",
+        "name": "MoneyGram",
+        "country": "US",
+        "currency": "USDC",
+        "available": true
+      },
+      "destinationAnchor": {
+        "id": "moneygram.com:off-ramp:MX:MXN",
+        "name": "MoneyGram",
+        "country": "MX",
+        "currency": "MXN",
+        "available": true
+      },
+      "feePercentage": 2.2,
+      "feeAmount": 11,
+      "feeBreakdown": {
+        "onRamp": 0.8,
+        "bridge": 0.2,
+        "offRamp": 1.2
+      },
+      "exchangeRate": 17.25,
+      "estimatedTime": "8 min",
+      "estimatedMinutes": 8,
+      "receivedAmount": 8433.25,
+      "available": true,
+      "recommended": true,
+      "score": 87.5
+    }
+  ],
+  "meta": {
+    "origin": "US",
+    "destination": "MX",
+    "amount": 500,
+    "queriedAt": "2026-03-03T15:30:00.000Z",
+    "noRouteReason": null
+  }
+}
+```
+
+## Edge cases
+
+### No routes available
+
+If no anchors support your corridor:
+
+```json
+{
+  "routes": [],
+  "meta": {
+    "noRouteReason": "No operational route with real SEP data for this corridor."
+  }
+}
+```
+
+### Partial anchor outages
+
+If some anchors are offline, you'll still see available routes. The `anchorDiagnostics` array shows why certain anchors were excluded:
+
+```json
+{
+  "meta": {
+    "anchorDiagnostics": [
+      {
+        "anchorId": "example.com:on-ramp:US:USDC",
+        "operational": false,
+        "diagnostics": ["SEP-24 endpoint missing in stellar.toml"]
+      }
+    ]
+  }
+}
+```
+
+<Info>
+Route comparison is designed to degrade gracefully. Even if half the anchors are down, you'll see the best available options.
+</Info>
+
+## Performance optimizations
+
+1. **Parallel capability resolution** - All anchor SEP checks run concurrently
+2. **10-minute capability cache** - Reduces redundant `stellar.toml` fetches
+3. **Route limit** - Maximum 12 routes returned (configurable via `MAX_COMPARE_ROUTES`)
+4. **Database fallback** - If Supabase is unreachable, falls back to local `anchors-export.json`
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Execute a transfer" href="/features/payment-execution" icon="arrow-right">
+    Learn how to execute a selected route using SEP-10 + SEP-24
+  </Card>
+  <Card title="Anchor management" href="/features/anchor-management" icon="database">
+    Understand how anchors are discovered, validated, and synced
+  </Card>
+</CardGroup>

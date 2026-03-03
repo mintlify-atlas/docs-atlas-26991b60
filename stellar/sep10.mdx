@@ -1,0 +1,312 @@
+---
+title: SEP-10 authentication
+description: Secure authentication with Stellar anchors using challenge transactions
+---
+
+SEP-10 defines a standard authentication flow for Stellar anchors using challenge transactions. This protocol enables secure, wallet-based authentication without requiring passwords or traditional credentials.
+
+## Overview
+
+SEP-10 authentication works through a challenge-response mechanism where:
+
+1. Client requests a challenge transaction from the anchor
+2. Anchor generates a transaction with specific requirements
+3. Client signs the transaction with their private key
+4. Anchor verifies the signature and issues a JWT token
+
+### Why SEP-10?
+
+- **Passwordless**: No need to store or manage passwords
+- **Cryptographic**: Leverages Stellar's signing infrastructure
+- **Standardized**: Consistent across all compliant anchors
+- **Secure**: Short-lived tokens with configurable expiration
+
+## Implementation
+
+PayOnProof implements SEP-10 authentication in `services/api/lib/stellar/sep10.ts`:
+
+### Request token flow
+
+```typescript services/api/lib/stellar/sep10.ts
+export async function requestSep10Token(
+  input: Sep10TokenInput
+): Promise<Sep10TokenResult> {
+  let domain = input.domain?.trim();
+  let webAuthEndpoint = input.webAuthEndpoint?.trim();
+  let serverSigningKey = input.serverSigningKey?.trim();
+  
+  // Auto-discover endpoint if not provided
+  if (!webAuthEndpoint) {
+    if (!domain) {
+      throw new Error("Provide domain or webAuthEndpoint");
+    }
+    const discovered = await discoverAnchorFromDomain({ domain });
+    webAuthEndpoint = discovered.webAuthEndpoint;
+    domain = discovered.domain;
+    serverSigningKey = serverSigningKey || discovered.signingKey;
+  }
+  
+  if (!webAuthEndpoint) {
+    throw new Error("WEB_AUTH_ENDPOINT not found in stellar.toml");
+  }
+  if (!serverSigningKey) {
+    throw new Error(
+      "Missing SIGNING_KEY for SEP-10 verification. Provide domain or serverSigningKey."
+    );
+  }
+  
+  const keypair = Keypair.fromSecret(input.secretKey.trim());
+  const account = input.accountPublicKey?.trim() || keypair.publicKey();
+  
+  // ... challenge request and verification
+}
+```
+
+<Info>
+Full implementation at `services/api/lib/stellar/sep10.ts:53`
+</Info>
+
+## Challenge request
+
+The authentication process starts by requesting a challenge transaction:
+
+```typescript
+const authBase = normalizeBaseUrl(webAuthEndpoint);
+let challengeUrl = appendQuery(authBase, "account", account);
+challengeUrl = appendQuery(challengeUrl, "home_domain", input.homeDomain);
+challengeUrl = appendQuery(challengeUrl, "client_domain", input.clientDomain);
+
+const challengeRes = await fetchWithTimeout(
+  challengeUrl,
+  { method: "GET", headers: { Accept: "application/json" } },
+  input.timeoutMs ?? DEFAULT_TIMEOUT_MS
+);
+
+const challengeJson = await challengeRes.json() as {
+  transaction?: string;
+  network_passphrase?: string;
+};
+```
+
+### Query parameters
+
+- **account**: The Stellar account requesting authentication
+- **home_domain**: Optional domain of the client application
+- **client_domain**: Optional domain for client verification
+
+<Note>
+The challenge request is a simple GET request. The anchor returns a base64-encoded transaction for the client to sign.
+</Note>
+
+## Challenge verification
+
+Before signing, the client must verify the challenge transaction:
+
+```typescript
+const networkPassphrase =
+  challengeJson.network_passphrase || getStellarConfig().networkPassphrase;
+const expectedHomeDomain = input.homeDomain?.trim() || domain;
+const expectedWebAuthDomain = new URL(authBase).hostname.toLowerCase();
+
+const { clientAccountID } = WebAuth.readChallengeTx(
+  challengeJson.transaction,
+  serverSigningKey,
+  networkPassphrase,
+  expectedHomeDomain,
+  expectedWebAuthDomain
+);
+
+if (clientAccountID !== account) {
+  throw new Error("SEP-10 challenge account mismatch");
+}
+```
+
+<Tip>
+The `WebAuth.readChallengeTx` function from Stellar SDK performs comprehensive validation including signature verification, domain checks, and expiration validation.
+</Tip>
+
+## Signing and submission
+
+After verification, the client signs the challenge and submits it:
+
+```typescript
+const tx = TransactionBuilder.fromXDR(
+  challengeJson.transaction,
+  networkPassphrase
+);
+tx.sign(keypair);
+const signedTx = tx.toEnvelope().toXDR("base64");
+
+const tokenRes = await fetchWithTimeout(
+  authBase,
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ transaction: signedTx }),
+  },
+  input.timeoutMs ?? DEFAULT_TIMEOUT_MS
+);
+
+const tokenJson = await tokenRes.json() as {
+  token?: string;
+  expires_at?: string;
+};
+```
+
+## Token response
+
+Successful authentication returns a JWT token:
+
+```typescript
+return {
+  domain,
+  webAuthEndpoint: authBase,
+  account,
+  token: tokenJson.token,
+  expiresAt: tokenJson.expires_at,
+};
+```
+
+### Response fields
+
+- **token**: JWT token for authenticated requests
+- **expiresAt**: ISO 8601 timestamp of token expiration
+- **account**: Authenticated Stellar account
+- **domain**: Anchor domain
+- **webAuthEndpoint**: Authentication endpoint used
+
+## Timeout configuration
+
+SEP-10 requests include configurable timeouts to prevent hanging:
+
+```typescript
+const DEFAULT_TIMEOUT_MS = 8000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+```
+
+Default timeout is 8 seconds but can be customized via the `timeoutMs` parameter.
+
+## Error handling
+
+Comprehensive error handling ensures clear diagnostic messages:
+
+```typescript
+if (!challengeRes.ok) {
+  const body = await challengeRes.text();
+  throw new Error(
+    `SEP-10 challenge failed (${challengeRes.status}): ${body || challengeRes.statusText}`
+  );
+}
+
+if (!challengeJson.transaction) {
+  throw new Error("SEP-10 challenge response missing transaction");
+}
+
+if (!tokenRes.ok) {
+  const body = await tokenRes.text();
+  throw new Error(
+    `SEP-10 token request failed (${tokenRes.status}): ${body || tokenRes.statusText}`
+  );
+}
+
+if (!tokenJson.token) {
+  throw new Error("SEP-10 token response missing token");
+}
+```
+
+## Input parameters
+
+```typescript
+export interface Sep10TokenInput {
+  domain?: string;
+  webAuthEndpoint?: string;
+  serverSigningKey?: string;
+  secretKey: string;
+  accountPublicKey?: string;
+  homeDomain?: string;
+  clientDomain?: string;
+  timeoutMs?: number;
+}
+```
+
+### Parameter descriptions
+
+- **domain**: Anchor domain for auto-discovery
+- **webAuthEndpoint**: Direct endpoint URL (alternative to domain)
+- **serverSigningKey**: Anchor's public signing key
+- **secretKey**: Client's Stellar secret key (required)
+- **accountPublicKey**: Account to authenticate (defaults to secretKey's public key)
+- **homeDomain**: Client's home domain
+- **clientDomain**: Client domain for verification
+- **timeoutMs**: Request timeout in milliseconds
+
+<Note>
+You must provide either `domain` or `webAuthEndpoint`. If using `domain`, the stellar.toml will be automatically fetched.
+</Note>
+
+## URL normalization
+
+Helper functions ensure consistent URL formatting:
+
+```typescript
+function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function appendQuery(url: string, key: string, value?: string): string {
+  if (!value) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+```
+
+## Network configuration
+
+The implementation uses the configured Stellar network:
+
+```typescript services/api/lib/stellar.ts
+export function getStellarConfig() {
+  const popEnv = getPopEnv();
+  const defaultPassphrase =
+    popEnv === "production"
+      ? "Public Global Stellar Network ; September 2015"
+      : "Test SDF Network ; September 2015";
+  
+  return {
+    popEnv,
+    horizonUrl: process.env.STELLAR_HORIZON_URL ?? defaultHorizonUrl,
+    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? defaultPassphrase,
+  };
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SEP-24 flows" icon="browser" href="/stellar/sep24">
+    Use SEP-10 tokens for hosted flows
+  </Card>
+  <Card title="Transaction signing" icon="pen" href="/stellar/transaction-signing">
+    Sign Stellar transactions
+  </Card>
+  <Card title="Anchor discovery" icon="compass" href="/stellar/sep-overview#sep-1-stellar-toml">
+    Discover anchor endpoints
+  </Card>
+  <Card title="Trust evaluation" icon="shield" href="/stellar/sep-overview#anchor-trust-evaluation">
+    Validate anchor security
+  </Card>
+</CardGroup>

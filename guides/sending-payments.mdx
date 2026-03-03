@@ -1,0 +1,291 @@
+---
+title: Sending payments
+description: Complete guide to sending cross-border payments with PayOnProof, from comparing routes to completing anchor flows.
+---
+
+PayOnProof makes it easy to send money across borders using the Stellar network. This guide walks through the entire payment flow, from searching for routes to receiving your proof of payment.
+
+## Overview of the payment flow
+
+Sending a payment through PayOnProof involves four main steps:
+
+1. **Search**: Select origin and destination countries and enter the amount
+2. **Compare routes**: Review available routes, fees, and exchange rates
+3. **Execute transfer**: Connect your wallet and authorize the transaction
+4. **Complete anchor flows**: Deposit funds and verify the proof of payment
+
+<Note>
+PayOnProof currently supports transfers through anchor partners on the Stellar network. MoneyGram routes are available for execution, while other routes can be compared but not yet executed.
+</Note>
+
+## Step 1: Search for routes
+
+Start by entering your transfer details:
+
+<Steps>
+  <Step title="Select your origin country">
+    Click the **From** dropdown and search for or select the country you're sending from. The list shows only countries with active on-ramp anchors.
+  </Step>
+
+  <Step title="Select your destination country">
+    Click the **To** dropdown and select where you're sending money. You can click the swap button between the two dropdowns to quickly reverse the direction.
+    
+    <Tip>
+    The swap button (rotating arrows icon) lets you instantly flip origin and destination without reselecting from the dropdowns.
+    </Tip>
+  </Step>
+
+  <Step title="Enter the amount">
+    Type the amount you want to send in the **You send** field. The currency will vary based on the routes available—you'll see specific asset information for each route in the next step.
+    
+    The amount appears in large text on the right side with "Varies" indicating the asset is determined by the selected route.
+  </Step>
+
+  <Step title="Click Compare Routes">
+    Once you've entered a valid amount and selected different origin and destination countries, click the **Compare Routes** button.
+    
+    The button shows a loading state ("Finding best routes...") while fetching real-time route data from Stellar anchors.
+  </Step>
+</Steps>
+
+## Step 2: Compare available routes
+
+After searching, you'll see a comparison of all available routes sorted by recommendation, price, or speed.
+
+### Understanding route information
+
+Each route card displays:
+
+- **Anchor names**: Origin anchor → Destination anchor (e.g., "MoneyGram Access USD → MoneyGram Access EUR")
+- **Fee**: Percentage and absolute amount in origin currency
+- **Exchange rate**: How much 1 unit of origin currency equals in destination currency
+- **Estimated time**: How long the transfer typically takes
+- **Recipient gets**: Final amount the recipient will receive after all fees
+- **Escrow status**: Whether the route uses escrow protection
+- **Recommended badge**: Routes marked as "Best" appear with a lightning bolt icon
+
+### Sorting routes
+
+Use the sorting tabs at the top right to reorder routes:
+
+- **Best** (recommended): Balances speed, cost, and reliability
+- **Cheapest**: Lowest fee percentage first
+- **Fastest**: Shortest estimated time first
+
+### View modes
+
+Toggle between two view modes:
+
+- **Card view**: Detailed cards with full route information and fee breakdowns
+- **Compact view**: Table format showing all routes at a glance
+
+<Note>
+The compact table view is only visible on desktop screens. Mobile users will see the card view.
+</Note>
+
+### Fee breakdown
+
+Expand any route card to see the detailed fee breakdown:
+
+- **On-ramp fee**: Fee charged by the origin anchor
+- **Bridge fee**: Network or intermediary fees
+- **Off-ramp fee**: Fee charged by the destination anchor
+
+### Selecting a route
+
+<Steps>
+  <Step title="Review route details">
+    Compare the routes based on your priorities (cost, speed, or escrow protection). Routes with the lightning bolt icon are recommended as the best overall option.
+  </Step>
+
+  <Step title="Check availability">
+    Only routes showing a **Select** button (not "Locked") can be executed. Currently, MoneyGram routes are available for execution.
+    
+    <Warning>
+    Non-MoneyGram routes are displayed for comparison but show a "Locked" button. These routes will become available in future updates.
+    </Warning>
+  </Step>
+
+  <Step title="Click Select">
+    Click the **Select** button on your chosen route to proceed to the execution step.
+  </Step>
+</Steps>
+
+## Step 3: Execute the transfer
+
+After selecting a route, you'll see the transaction execution screen.
+
+### Review transfer details
+
+The execution screen shows:
+
+- **Sending amount**: The amount in origin currency
+- **Route**: Origin anchor → Destination anchor
+- **Recipient gets**: Final amount in destination currency
+- **Fee**: Total fee amount and percentage
+- **Exchange rate**: Conversion rate between currencies
+- **Wallet address**: Your connected Stellar account (or "Not connected")
+- **Execution mode**: SEP-10 + SEP-24 (Stellar standard protocols)
+
+### Connect your wallet
+
+If you haven't already connected your Freighter wallet:
+
+1. The execution screen will prompt you to connect
+2. Click **Connect Wallet** and follow the [wallet connection guide](/guides/connecting-wallet)
+3. Approve the connection in the Freighter popup
+
+### Authorize the transfer
+
+<Steps>
+  <Step title="Review all details">
+    Carefully verify the amount, fees, exchange rate, and recipient amount before proceeding.
+  </Step>
+
+  <Step title="Click Confirm & Start Transfer">
+    Click the **Confirm & Start Transfer** button. This triggers a multi-step authorization process:
+    
+    - PayOnProof prepares the transfer with both anchors
+    - Freighter opens to request your signature on authentication challenges (SEP-10)
+    - You'll sign separate challenges for the origin and destination anchors
+  </Step>
+
+  <Step title="Sign in Freighter">
+    The Freighter popup will appear (possibly twice) asking you to sign transaction challenges:
+    
+    1. Review the transaction details in Freighter
+    2. Click **Sign** to approve each challenge
+    3. Wait for the signatures to be processed
+    
+    <Tip>
+    The signature requests are authentication challenges, not fund transfers. They prove you control the wallet address without moving any assets yet.
+    </Tip>
+  </Step>
+
+  <Step title="Wait for confirmation">
+    After signing, PayOnProof authorizes the transfer with both anchors and creates your transaction. You'll see a success message with anchor flow URLs.
+  </Step>
+</Steps>
+
+## Step 4: Complete anchor flows
+
+After authorization, you need to complete the deposit and withdrawal flows with the anchors.
+
+### Open anchor links
+
+You'll see two links:
+
+1. **Origin deposit**: Opens the origin anchor's interface to deposit funds
+2. **Destination withdrawal**: Opens the destination anchor's interface for recipient payout
+
+<Steps>
+  <Step title="Open origin deposit link">
+    Click **Open origin deposit** (e.g., "MoneyGram Access USD"). This opens the anchor's SEP-24 interactive flow in a new tab.
+    
+    Follow the anchor's instructions to:
+    - Complete KYC verification (if required)
+    - Provide payment method details
+    - Confirm the deposit
+  </Step>
+
+  <Step title="Open destination withdrawal link">
+    Click **Open destination withdrawal** (e.g., "MoneyGram Access EUR"). Complete the withdrawal flow to specify:
+    - Recipient details
+    - Payout method
+    - Any required documentation
+  </Step>
+
+  <Step title="Wait for processing">
+    After completing both anchor flows, the transaction processes on the Stellar network. This can take from minutes to hours depending on the anchors.
+    
+    <Note>
+    PayOnProof automatically polls the anchor status every 15 seconds. You'll see live updates like "Origin: pending | Destination: pending" in the proof step.
+    </Note>
+  </Step>
+</Steps>
+
+### Auto-verification
+
+Once both anchors complete the transaction:
+
+1. PayOnProof detects the Stellar transaction hash from the anchor status
+2. The hash is automatically filled in the verification field
+3. The proof of payment is generated and displayed
+4. You'll see a **Payment Verified** success banner
+
+### Manual verification
+
+If auto-verification doesn't work:
+
+1. Copy the Stellar transaction hash from the anchor's confirmation page
+2. Paste it into the "Stellar transaction hash" field
+3. Click **Verify On-chain** to manually generate the proof
+
+<Warning>
+Do not close the page while waiting for anchor flows to complete. If you need to leave, bookmark the page or save your transaction ID for reference.
+</Warning>
+
+## Transaction statuses
+
+Your transfer can have these statuses:
+
+- **Processing**: Transfer authorized, waiting for anchor flows
+- **Pending**: Anchor flows in progress
+- **Completed**: Both anchors processed, proof generated
+- **Failed**: An error occurred (you'll see a specific error message)
+
+## What to do if something goes wrong
+
+<Accordion title="Transaction stuck in 'processing'">
+If your transaction stays in processing:
+
+1. Ensure you completed both anchor flows (deposit and withdrawal)
+2. Check the anchor status updates shown in the proof step
+3. Wait at least 15-30 minutes for anchor processing
+4. Contact the anchor's support if there's no progress after 1 hour
+</Accordion>
+
+<Accordion title="Freighter signature failed">
+If signing fails in Freighter:
+
+1. Ensure you clicked **Sign** (not Reject) in the Freighter popup
+2. Check that your wallet is unlocked
+3. Verify you're on the correct network (Testnet for staging, Mainnet for production)
+4. Click **Back** and try the transfer again
+</Accordion>
+
+<Accordion title="Wrong amount or recipient">
+<Warning>
+**Blockchain transactions are irreversible**
+
+Once you sign and submit a transaction, it cannot be cancelled or reversed. Always verify:
+
+- The recipient details in the anchor flows
+- The amounts and fees before signing
+- The exchange rate is acceptable
+</Warning>
+
+If you entered wrong information in an anchor flow, contact that anchor's support immediately.
+</Accordion>
+
+<Accordion title="No routes found">
+If you see "No routes found":
+
+- Try a different origin or destination country
+- Check that both countries have operational anchors
+- The amount may be outside the anchor's limits
+- Some country pairs may not have established routes yet
+
+The error message will show a specific reason when available.
+</Accordion>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Verifying proofs" href="/guides/verifying-proofs">
+    Learn how to verify and share your proof of payment
+  </Card>
+  <Card title="Understanding fees" href="/guides/understanding-fees">
+    Detailed breakdown of how fees are calculated
+  </Card>
+</CardGroup>

@@ -1,0 +1,509 @@
+---
+title: Payment execution
+description: Execute cross-border payments using Stellar's SEP-10 authentication and SEP-24 interactive flows with real wallet integration
+---
+
+PayOnProof executes cross-border payments using Stellar Ecosystem Proposals (SEPs) to ensure secure, non-custodial transfers through anchor partners.
+
+## Three-phase execution model
+
+Payment execution happens in three distinct phases:
+
+<Steps>
+  <Step title="Prepare">
+    Fetch SEP-10 challenges from both origin and destination anchors
+  </Step>
+  <Step title="Authorize">
+    User signs challenges with Freighter wallet, exchange for SEP-10 JWT tokens, and start SEP-24 interactive flows
+  </Step>
+  <Step title="Status polling">
+    Backend polls anchor status endpoints to detect settlement completion
+  </Step>
+</Steps>
+
+<Note>
+PayOnProof never holds your private keys. All transaction signing happens in your Freighter wallet browser extension.
+</Note>
+
+## Phase 1: Prepare transfer
+
+The prepare phase sets up authentication challenges without executing anything on-chain.
+
+### API request
+
+```bash
+POST /api/execute-transfer
+Content-Type: application/json
+
+{
+  "phase": "prepare",
+  "route": {
+    "id": "route-moneygram-moneygram-1234567890",
+    "originAnchor": { "id": "moneygram.com:on-ramp:US:USDC", "name": "MoneyGram" },
+    "destinationAnchor": { "id": "moneygram.com:off-ramp:MX:MXN", "name": "MoneyGram" },
+    "originCurrency": "USDC",
+    "destinationCurrency": "MXN",
+    "available": true
+  },
+  "amount": 500,
+  "senderAccount": "GBXYZ...ABC"
+}
+```
+
+### What happens server-side
+
+```typescript services/api/api/execute-transfer.ts
+// 1. Validate route availability
+if (!route.available) {
+  return res.status(400).json({
+    error: "Selected route is not operational. Choose an available route."
+  });
+}
+
+// 2. Fetch active anchors from catalog
+const anchors = await listActiveAnchors();
+const originAnchor = findAnchorById(anchors, route.originAnchor.id);
+const destinationAnchor = findAnchorById(anchors, route.destinationAnchor.id);
+
+// 3. Verify execution-ready status (SEP-10 + SEP-24 support)
+if (!isAnchorExecutionReady(originAnchor) || !isAnchorExecutionReady(destinationAnchor)) {
+  return res.status(400).json({
+    error: "Selected anchors are not execution-ready."
+  });
+}
+
+// 4. Prepare SEP-10 challenges for both anchors
+const transactionId = `POP-${Date.now()}-${randomId()}`;
+const preparedAnchors = await Promise.all([
+  prepareAnchorAuth({
+    role: "origin",
+    anchor: originAnchor,
+    assetCode: route.originCurrency,
+    amount,
+    account: senderAccount,
+    clientDomain: resolveClientDomain(req)
+  }),
+  prepareAnchorAuth({
+    role: "destination",
+    anchor: destinationAnchor,
+    assetCode: route.destinationCurrency,
+    amount,
+    account: senderAccount,
+    clientDomain: resolveClientDomain(req)
+  })
+]);
+```
+
+### Response
+
+```json
+{
+  "status": "needs_signature",
+  "prepared": {
+    "transactionId": "POP-1709481234567-A1B2C3",
+    "routeId": "route-moneygram-moneygram-1234567890",
+    "senderAccount": "GBXYZ...ABC",
+    "amount": 500,
+    "createdAt": "2026-03-03T15:45:00.000Z",
+    "anchors": [
+      {
+        "role": "origin",
+        "anchorId": "moneygram.com:on-ramp:US:USDC",
+        "anchorName": "MoneyGram",
+        "domain": "stellar.moneygram.com",
+        "assetCode": "USDC",
+        "assetIssuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": 500,
+        "account": "GBXYZ...ABC",
+        "webAuthEndpoint": "https://stellar.moneygram.com/auth",
+        "transferServerSep24": "https://stellar.moneygram.com/sep24",
+        "challengeXdr": "AAAAAgAAAABhc2Rma...",
+        "networkPassphrase": "Public Global Stellar Network ; September 2015"
+      },
+      {
+        "role": "destination",
+        "anchorId": "moneygram.com:off-ramp:MX:MXN",
+        "anchorName": "MoneyGram",
+        "domain": "stellar.moneygram.com",
+        "assetCode": "MXN",
+        "amount": 500,
+        "account": "GBXYZ...ABC",
+        "webAuthEndpoint": "https://stellar.moneygram.com/auth",
+        "transferServerSep24": "https://stellar.moneygram.com/sep24",
+        "challengeXdr": "AAAAAgAAAABhc2Rma...",
+        "networkPassphrase": "Public Global Stellar Network ; September 2015"
+      }
+    ]
+  }
+}
+```
+
+<Info>
+The `challengeXdr` is a base64-encoded Stellar transaction that proves wallet ownership. The user must sign it with their private key in Freighter.
+</Info>
+
+## Phase 2: Authorize transfer
+
+The authorize phase signs the challenges and starts interactive anchor flows.
+
+### Frontend wallet signing
+
+```typescript services/web/components/transaction-execution.tsx
+import { signFreighterTransaction } from "@/lib/wallet";
+
+// User clicks "Confirm & Start Transfer"
+const runTransfer = async () => {
+  // Prepare transfer (Phase 1)
+  const prepared = await prepareTransfer({ route, amount, senderAccount });
+
+  // Sign each challenge with Freighter
+  const signatures = {} as Record<"origin" | "destination", string>;
+  for (const anchor of prepared.anchors) {
+    const signedTxXdr = await signFreighterTransaction({
+      transactionXdr: anchor.challengeXdr,
+      networkPassphrase: anchor.networkPassphrase,
+      address: walletAddress
+    });
+    signatures[anchor.role] = signedTxXdr;
+  }
+
+  // Authorize transfer (Phase 2)
+  const authorized = await authorizeTransfer({ prepared, signatures });
+  
+  // Show interactive URLs to user
+  window.open(authorized.transaction.anchorFlows.originDeposit.url);
+  window.open(authorized.transaction.anchorFlows.destinationWithdraw.url);
+};
+```
+
+### API request
+
+```bash
+POST /api/execute-transfer
+Content-Type: application/json
+
+{
+  "phase": "authorize",
+  "prepared": { /* prepared payload from Phase 1 */ },
+  "signatures": {
+    "origin": "AAAAAgAAAABhc2Rma...SIGNED_XDR",
+    "destination": "AAAAAgAAAABhc2Rma...SIGNED_XDR"
+  }
+}
+```
+
+### What happens server-side
+
+```typescript services/api/api/execute-transfer.ts
+// 1. Optionally add client_domain signature if required by anchor
+for (const anchor of prepared.anchors) {
+  const signedWithClientDomain = signClientDomainChallenge({
+    transactionXdr: signatures[anchor.role],
+    networkPassphrase: anchor.networkPassphrase,
+    anchorDomain: anchor.domain
+  });
+
+  // 2. Exchange signed challenge for SEP-10 JWT token
+  const token = await exchangeSep10Token({
+    webAuthEndpoint: anchor.webAuthEndpoint,
+    signedChallengeXdr: signedWithClientDomain
+  });
+
+  // 3. Start SEP-24 interactive flow
+  const operation = anchor.role === "origin" ? "deposit" : "withdraw";
+  const interactive = await startSep24Interactive({
+    transferServerSep24: anchor.transferServerSep24,
+    token,
+    operation,
+    assetCode: anchor.assetCode,
+    assetIssuer: anchor.assetIssuer,
+    account: anchor.account,
+    amount: anchor.amount,
+    memo: transactionId,
+    callbackUrl: buildCallbackUrl(req, transactionId, callbackToken)
+  });
+
+  interactiveByRole[anchor.role] = interactive;
+}
+```
+
+### SEP-10 JWT token exchange
+
+PayOnProof sends the signed challenge to the anchor's `WEB_AUTH_ENDPOINT`:
+
+```typescript
+const response = await fetch(webAuthEndpoint, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ transaction: signedChallengeXdr })
+});
+
+const { token } = await response.json();
+// token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+This JWT token authorizes all subsequent requests to the anchor's SEP-24 endpoints.
+
+### SEP-24 interactive flow
+
+PayOnProof uses the JWT to start an interactive deposit (origin) or withdraw (destination) flow:
+
+```typescript
+const response = await fetch(
+  `${transferServerSep24}/transactions/${operation}/interactive`,
+  {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      asset_code: assetCode,
+      asset_issuer: assetIssuer,
+      account: senderAccount,
+      amount: String(amount),
+      memo: transactionId,
+      callback: callbackUrl
+    })
+  }
+);
+
+const { id, url } = await response.json();
+// url = "https://stellar.moneygram.com/sep24/interactive/ABC123"
+```
+
+<Tip>
+The interactive URL opens the anchor's KYC/payment flow in a new tab. Users complete identity verification and payment authorization there.
+</Tip>
+
+### Response
+
+```json
+{
+  "status": "processing",
+  "transaction": {
+    "id": "POP-1709481234567-A1B2C3",
+    "routeId": "route-moneygram-moneygram-1234567890",
+    "amount": 500,
+    "status": "processing",
+    "createdAt": "2026-03-03T15:45:00.000Z",
+    "senderAccount": "GBXYZ...ABC",
+    "statusRef": "aGVsbG8ud29ybGQ.dGFnLnZhbHVl.ZW5jcnlwdGVk",
+    "callbackUrl": "https://api.payonproof.com/api/anchors/sep24/callback?transactionId=POP-...",
+    "popEnv": "production",
+    "anchorFlows": {
+      "originDeposit": {
+        "id": "MGM-DEP-789",
+        "url": "https://stellar.moneygram.com/sep24/interactive/ABC123",
+        "type": "interactive_customer_info_needed",
+        "anchorName": "MoneyGram"
+      },
+      "destinationWithdraw": {
+        "id": "MGM-WTH-790",
+        "url": "https://stellar.moneygram.com/sep24/interactive/DEF456",
+        "type": "interactive_customer_info_needed",
+        "anchorName": "MoneyGram"
+      }
+    }
+  }
+}
+```
+
+<Note>
+The `statusRef` is an encrypted token that allows polling transaction status without exposing JWT tokens to the frontend.
+</Note>
+
+## Phase 3: Status polling
+
+While the user completes anchor flows, you can poll for status updates.
+
+### API request
+
+```bash
+POST /api/execute-transfer
+Content-Type: application/json
+
+{
+  "phase": "status",
+  "transactionId": "POP-1709481234567-A1B2C3",
+  "statusRef": "aGVsbG8ud29ybGQ.dGFnLnZhbHVl.ZW5jcnlwdGVk"
+}
+```
+
+### What happens server-side
+
+```typescript services/api/api/execute-transfer.ts
+// 1. Decrypt statusRef to get JWT tokens
+const state = decryptStatusRef(statusRef);
+
+// 2. Check for callback event (fastest path)
+const callbackEvent = await getAnchorCallbackEvent({
+  transactionId,
+  callbackToken: state.callbackToken
+});
+
+if (callbackEvent?.stellarTxHash) {
+  return res.status(200).json({
+    status: "ok",
+    stellarTxHash: callbackEvent.stellarTxHash,
+    completed: true,
+    source: "callback"
+  });
+}
+
+// 3. Poll anchor status endpoints
+const results = await Promise.all(
+  state.anchors.map(async (handle) => {
+    const endpoint = `${handle.transferServerSep24}/transaction?id=${handle.interactiveId}`;
+    const response = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${handle.token}` }
+    });
+    const { transaction } = await response.json();
+    return {
+      role: handle.role,
+      status: transaction.status,
+      stellarTxHash: transaction.stellar_transaction_id
+    };
+  })
+);
+```
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "transactionId": "POP-1709481234567-A1B2C3",
+  "stellarTxHash": "a1b2c3d4e5f6...",
+  "completed": true,
+  "anchors": [
+    {
+      "role": "origin",
+      "anchorName": "MoneyGram",
+      "interactiveId": "MGM-DEP-789",
+      "ok": true,
+      "status": "completed",
+      "stellarTxHash": "a1b2c3d4e5f6..."
+    },
+    {
+      "role": "destination",
+      "anchorName": "MoneyGram",
+      "interactiveId": "MGM-WTH-790",
+      "ok": true,
+      "status": "completed"
+    }
+  ]
+}
+```
+
+<Info>
+When `completed: true` and a `stellarTxHash` is present, you can proceed to proof generation.
+</Info>
+
+## UI flow walkthrough
+
+### Step 1: Review transfer details
+
+Before execution, users see a confirmation screen:
+
+```tsx
+<TransactionExecution route={selectedRoute} amount={500} />
+```
+
+**Displays:**
+- Amount sending and amount recipient gets
+- Fee breakdown (origin + bridge + destination)
+- Exchange rate
+- Connected wallet address
+- Execution mode (SEP-10 + SEP-24)
+
+### Step 2: Sign challenges
+
+User clicks "Confirm & Start Transfer". Freighter popup opens **twice** (once per anchor):
+
+1. **Origin anchor challenge** - "Sign to authorize deposit with MoneyGram"
+2. **Destination anchor challenge** - "Sign to authorize withdrawal with MoneyGram"
+
+<Warning>
+If the same anchor handles both origin and destination, PayOnProof reuses the same signature to avoid double-signing.
+</Warning>
+
+### Step 3: Complete anchor flows
+
+Two new tabs open:
+
+1. **Origin deposit flow** - User completes KYC and initiates deposit
+2. **Destination withdraw flow** - User provides recipient details and confirms withdrawal
+
+### Step 4: Settlement confirmation
+
+Once both flows complete, the anchor broadcasts the Stellar transaction. PayOnProof detects completion via:
+
+- **Callback URL** (fastest) - Anchor calls PayOnProof webhook when done
+- **Status polling** (fallback) - Frontend polls every 5 seconds
+
+## Security features
+
+<CardGroup cols={2}>
+  <Card title="Non-custodial" icon="shield-check">
+    PayOnProof never holds your private keys. All signing happens in Freighter.
+  </Card>
+  <Card title="Encrypted state" icon="lock">
+    JWT tokens are encrypted with AES-256-GCM and never exposed to the frontend.
+  </Card>
+  <Card title="Client domain signing" icon="key">
+    For MoneyGram and other high-security anchors, PayOnProof adds a client_domain signature to prove identity.
+  </Card>
+  <Card title="Callback verification" icon="webhook">
+    Anchor callbacks include a secret token to prevent spoofing.
+  </Card>
+</CardGroup>
+
+## Error handling
+
+### Challenge signature mismatch
+
+```json
+{
+  "error": "SEP10 client-domain signer mismatch. Challenge requires 'GXYZ...' but SEP10_CLIENT_DOMAIN_SIGNING_SECRET resolves to 'GABC...'"
+}
+```
+
+**Cause:** The anchor requires a specific client domain signer, but the backend secret doesn't match.
+
+**Fix:** Update `SEP10_CLIENT_DOMAIN_SIGNING_SECRET` in backend environment.
+
+### Asset not supported
+
+```json
+{
+  "error": "Anchor MoneyGram does not support asset_code 'EUR' for deposit in SEP-24 /info"
+}
+```
+
+**Cause:** The selected asset isn't enabled in the anchor's SEP-24 `/info` endpoint.
+
+**Fix:** This shouldn't happen if route comparison worked correctly. File a bug if you see this.
+
+### Interactive flow timeout
+
+```json
+{
+  "error": "SEP-24 transaction status failed (404): Transaction not found"
+}
+```
+
+**Cause:** User abandoned the interactive flow or it expired.
+
+**Fix:** User must restart the transfer from the beginning.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Generate proof" href="/features/proof-generation" icon="file-check">
+    Learn how to generate verifiable proof of payment after settlement
+  </Card>
+  <Card title="Anchor management" href="/features/anchor-management" icon="database">
+    Understand how anchors are validated and synced
+  </Card>
+</CardGroup>

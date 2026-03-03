@@ -1,0 +1,175 @@
+---
+title: Welcome to PayOnProof
+description: A transparent, multi-anchor payment routing platform built on Stellar that helps businesses save 3-8% on international payments
+---
+
+<img
+  className="block dark:hidden"
+  src="/logo/light.svg"
+  alt="PayOnProof Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/logo/dark.svg"
+  alt="PayOnProof Hero Dark"
+/>
+
+## What is PayOnProof?
+
+PayOnProof (POP) is a simple interface that aggregates multiple Stellar anchors and routes cross-border payments through the best available rate in real-time. It's not a bank or marketplace—it's the layer that optimizes how SMEs pay internationally.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get started with PayOnProof in under 5 minutes. Send your first payment and receive verifiable proof.
+  </Card>
+  <Card
+    title="How it works"
+    icon="chart-network"
+    href="/how-it-works"
+  >
+    Understand the payment routing flow, anchor aggregation, and on-chain verification architecture.
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api/overview"
+  >
+    Explore REST endpoints for route comparison, transfer execution, and proof generation.
+  </Card>
+  <Card
+    title="Development"
+    icon="screwdriver-wrench"
+    href="/deployment/local-development"
+  >
+    Set up your local environment and start building on PayOnProof.
+  </Card>
+</CardGroup>
+
+## The problem
+
+SMEs and freelancers in LATAM lose between **3% and 8% per international payment** due to:
+
+- Hidden exchange rate spreads
+- Accumulated correspondent bank fees
+- Unpredictable settlement times (3-5 business days)
+- Lack of transparency about real costs
+
+While Stellar anchors exist with better conditions, integrating them individually is technically complex for the average SME.
+
+**Result:**
+- Eroded margins
+- Reduced competitiveness
+- Constant operational friction
+
+## The solution
+
+PayOnProof aggregates multiple Stellar anchors into a single interface and:
+
+- Queries rates in real-time
+- Normalizes fees and conditions
+- Allows manual selection or "Choose for me" auto-routing
+- Executes payment through the most economical route
+- Records a verifiable on-chain event
+
+**What you see:**
+
+```
+Amount sent → Amount received → Total fee → Estimated time
+```
+
+No complex wallets. No technical integrations. No opacity.
+
+## Key benefits
+
+<CardGroup cols={3}>
+  <Card title="Save 3-8%" icon="piggy-bank">
+    Reduce payment costs compared to traditional banking by routing through the best anchor rates.
+  </Card>
+  <Card title="Minutes, not days" icon="clock">
+    Settlement in minutes instead of 3-5 business days with traditional correspondent banking.
+  </Card>
+  <Card title="Full transparency" icon="eye">
+    See all fees, exchange rates, and conditions before confirming. No hidden costs.
+  </Card>
+  <Card title="Verifiable proof" icon="shield-check">
+    Every payment generates an on-chain proof with transaction hash, timestamp, and settlement details.
+  </Card>
+  <Card title="Auto-routing" icon="route">
+    Let PayOnProof automatically select the best route based on fees, speed, and reliability.
+  </Card>
+  <Card title="Multi-anchor" icon="layer-group">
+    Access multiple Stellar anchors through a single integration instead of building each connection yourself.
+  </Card>
+</CardGroup>
+
+## How PayOnProof works (4 steps)
+
+<Steps>
+  <Step title="Enter details">
+    Select your origin country, destination country, and amount. PayOnProof instantly queries all available anchor routes.
+  </Step>
+  <Step title="Compare routes">
+    View side-by-side comparison of fees, settlement speed, escrow options, and anchor operational status.
+  </Step>
+  <Step title="Execute transfer">
+    One click to execute. Optional escrow protection secures funds through every leg of the journey.
+  </Step>
+  <Step title="Receive proof">
+    A verifiable, portable Proof of Payment is generated on-chain. Share it with anyone, anywhere.
+  </Step>
+</Steps>
+
+<Note>
+  PayOnProof does not custody funds long-term. KYC and compliance are handled by the anchors themselves.
+</Note>
+
+## Stellar standards used
+
+PayOnProof is built on established Stellar Ecosystem Proposals (SEPs):
+
+- **SEP-1**: Anchor information discovery via `stellar.toml`
+- **SEP-10**: Authentication via challenge/response flow
+- **SEP-24**: Interactive anchor transfers (deposit/withdraw)
+- **SEP-31**: Cross-border payments direct to anchors
+
+## On-chain vs off-chain
+
+### On-chain (Stellar blockchain)
+
+- Transaction hash
+- Anchor used
+- Timestamp
+- Final settled amount
+- Verifiable event ID
+
+### Off-chain (PayOnProof API)
+
+- Route simulations
+- Personal data
+- User preferences
+- Savings analytics
+
+PayOnProof does not custody funds. All transactions settle through Stellar anchors with established compliance processes.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Send your first payment"
+    icon="paper-plane"
+    href="/quickstart"
+  >
+    Follow the quickstart guide to route your first cross-border payment in under 5 minutes.
+  </Card>
+  <Card
+    title="Explore the architecture"
+    icon="sitemap"
+    href="/how-it-works"
+  >
+    Deep dive into payment routing, anchor discovery, and verification mechanisms.
+  </Card>
+</CardGroup>

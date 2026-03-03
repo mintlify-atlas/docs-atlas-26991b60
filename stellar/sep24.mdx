@@ -1,0 +1,249 @@
+---
+title: SEP-24 hosted deposit and withdrawal
+description: Implementing interactive anchor flows with hosted web interfaces
+---
+
+SEP-24 defines a standard for hosted deposit and withdrawal flows where anchors provide web interfaces for users to complete transactions. PayOnProof integrates with SEP-24 anchors to offer seamless on-ramp and off-ramp experiences.
+
+## Overview
+
+SEP-24 enables anchors to host their own KYC, payment collection, and verification interfaces while maintaining a standardized integration pattern. This is the most common implementation for user-facing flows.
+
+### Key characteristics
+
+- **Hosted UI**: Anchors control the user interface and experience
+- **Web-based**: Users complete flows in web browsers or webviews
+- **KYC compliant**: Anchors handle regulatory requirements
+- **SEP-10 authentication**: Requires authenticated sessions
+
+## Fetching SEP-24 capabilities
+
+PayOnProof discovers SEP-24 endpoints through the anchor's stellar.toml file and fetches capability information from the `/info` endpoint.
+
+### Info endpoint integration
+
+```typescript services/api/lib/stellar/sep24.ts
+export async function fetchSep24Info(input: Sep24InfoInput): Promise<{
+  infoUrl: string;
+  transferServerSep24: string;
+  domain?: string;
+  info: unknown;
+}> {
+  let transferServer = input.transferServerSep24?.trim();
+  let domain = input.domain?.trim();
+  
+  if (!transferServer) {
+    if (!domain) {
+      throw new Error(
+        "Either transferServerSep24 or domain is required to fetch SEP-24 info"
+      );
+    }
+    
+    const discovered = await discoverAnchorFromDomain({ domain });
+    transferServer = discovered.transferServerSep24;
+    domain = discovered.domain;
+  }
+  
+  if (!transferServer) {
+    throw new Error("TRANSFER_SERVER_SEP0024 not found in stellar.toml");
+  }
+  
+  const transferServerSep24 = normalizeBaseUrl(transferServer);
+  const infoUrl = `${transferServerSep24}/info`;
+  const response = await fetchWithTimeout(
+    infoUrl,
+    input.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  );
+  
+  if (!response.ok) {
+    throw new Error(
+      `Failed to load SEP-24 /info (${response.status} ${response.statusText})`
+    );
+  }
+  
+  const info = await response.json();
+  return { infoUrl, transferServerSep24, domain, info };
+}
+```
+
+<Info>
+The implementation is in `services/api/lib/stellar/sep24.ts:29`
+</Info>
+
+### Discovery flow
+
+The SEP-24 discovery process follows these steps:
+
+1. **Domain resolution**: If only a domain is provided, fetch the stellar.toml file
+2. **Endpoint extraction**: Extract `TRANSFER_SERVER_SEP0024` from the TOML
+3. **Info fetch**: Query the `/info` endpoint for supported operations
+4. **Capability parsing**: Extract deposit/withdraw support and fee information
+
+## Info endpoint response
+
+The `/info` endpoint returns details about supported assets and operations:
+
+```json
+{
+  "deposit": {
+    "USDC": {
+      "enabled": true,
+      "fee_fixed": 0.1,
+      "fee_percent": 0.1,
+      "min_amount": 10,
+      "max_amount": 10000,
+      "fields": {
+        "email_address": {
+          "description": "Email address for transaction notifications",
+          "optional": true
+        }
+      }
+    }
+  },
+  "withdraw": {
+    "USDC": {
+      "enabled": true,
+      "fee_fixed": 0.1,
+      "fee_percent": 0.1,
+      "types": {
+        "bank_account": {
+          "fields": {
+            "dest": { "description": "Bank account number" },
+            "dest_extra": { "description": "Routing number" }
+          }
+        }
+      }
+    }
+  },
+  "fee": {
+    "enabled": true
+  },
+  "transactions": {
+    "enabled": true
+  },
+  "transaction": {
+    "enabled": true
+  }
+}
+```
+
+## Fee extraction
+
+PayOnProof extracts fee information from the SEP-24 info response to display costs to users:
+
+```typescript services/api/lib/stellar/capabilities.ts
+function extractFeeFromInfo(
+  info: unknown,
+  assetCode: string
+): { fixed?: number; percent?: number } | undefined {
+  if (!info || typeof info !== "object") return undefined;
+  const root = info as Record<string, unknown>;
+  const deposit = root.deposit as Record<string, unknown> | undefined;
+  const withdraw = root.withdraw as Record<string, unknown> | undefined;
+  
+  const candidates = [
+    deposit?.[assetCode],
+    withdraw?.[assetCode],
+    deposit?.[`${assetCode}:*`],
+    withdraw?.[`${assetCode}:*`],
+  ];
+  
+  const found = candidates.find((v) => v && typeof v === "object") as
+    | Record<string, unknown>
+    | undefined;
+    
+  if (!found) return undefined;
+  
+  return {
+    fixed: toNumber(found.fee_fixed),
+    percent: toNumber(found.fee_percent),
+  };
+}
+```
+
+<Tip>
+Fees can be specified as fixed amounts (`fee_fixed`) or percentages (`fee_percent`), or both. PayOnProof extracts both types when available.
+</Tip>
+
+## Timeout configuration
+
+All SEP-24 requests support configurable timeouts:
+
+```typescript
+const DEFAULT_TIMEOUT_MS = 8000;
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+```
+
+The default timeout is 8 seconds, but can be customized via the `timeoutMs` parameter.
+
+## Integration with anchor discovery
+
+SEP-24 info is automatically fetched during the anchor discovery process:
+
+```typescript services/api/lib/stellar/horizon.ts
+if (sep1.transferServerSep24) {
+  try {
+    sep24Info = (
+      await fetchSep24Info({
+        transferServerSep24: sep1.transferServerSep24,
+        timeoutMs,
+      })
+    ).info;
+  } catch {
+    // ignore - anchor may not support SEP-24
+  }
+}
+
+const extracted = [
+  ...extractTypesAndCurrencies(sep24Info),
+  ...extractTypesAndCurrencies(sep6Info),
+];
+```
+
+<Note>
+The Horizon integration uses SEP-24 and SEP-6 info to automatically catalog which anchors support on-ramp and off-ramp for different currencies and countries.
+</Note>
+
+## Error handling
+
+SEP-24 requests include comprehensive error handling:
+
+```typescript
+if (!response.ok) {
+  throw new Error(
+    `Failed to load SEP-24 /info (${response.status} ${response.statusText})`
+  );
+}
+```
+
+Errors include HTTP status codes and status text for debugging.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SEP-10 authentication" icon="shield" href="/stellar/sep10">
+    Required before initiating SEP-24 flows
+  </Card>
+  <Card title="SEP-31 direct payments" icon="paper-plane" href="/stellar/sep31">
+    Alternative for programmatic transfers
+  </Card>
+  <Card title="Capability resolution" icon="puzzle-piece" href="/stellar/sep-overview#capability-resolution">
+    How PayOnProof determines anchor support
+  </Card>
+  <Card title="Anchor trust" icon="badge-check" href="/stellar/sep-overview#anchor-trust-evaluation">
+    Security validation for anchors
+  </Card>
+</CardGroup>

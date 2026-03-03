@@ -1,0 +1,614 @@
+---
+title: Backend architecture
+description: API structure, business logic layers, and data flow in PayOnProof backend services
+---
+
+The PayOnProof backend is a **serverless TypeScript API** deployed on Vercel that orchestrates remittance route discovery, anchor capability resolution, and transaction execution.
+
+## Directory structure
+
+```text
+services/api/
+  api/                          # HTTP endpoints (Vercel Functions)
+    anchors/
+      catalog.ts                # List anchors in catalog
+      countries.ts              # Get supported countries
+      diagnostics.ts            # Anchor health diagnostics
+      ops.ts                    # Admin operations
+    compare-routes.ts           # Main route comparison endpoint
+    execute-transfer.ts         # Transfer execution (MVP)
+    generate-proof.ts           # Proof of payment generation
+    health.ts                   # Health check
+  lib/                          # Business logic and utilities
+    remittances/
+      compare/
+        service.ts              # Route comparison orchestration
+        scoring.ts              # Route scoring algorithm
+        fx.ts                   # Exchange rate lookup
+        schema.ts               # Input validation
+        types.ts                # TypeScript interfaces
+    stellar/                    # Stellar protocol providers
+      sep1.ts                   # SEP-1: stellar.toml discovery
+      sep6.ts                   # SEP-6: Deposit/Withdrawal API
+      sep10.ts                  # SEP-10: Stellar Web Auth
+      sep24.ts                  # SEP-24: Hosted flows
+      capabilities.ts           # Capability resolution
+      horizon.ts                # Horizon API client
+    repositories/               # Database access layer
+      anchors-catalog.ts        # Anchor catalog CRUD
+      anchor-events.ts          # Event logging
+    http.ts                     # HTTP utilities
+    stellar.ts                  # Stellar config
+    supabase.ts                 # Supabase client
+  sql/                          # Database migrations
+    001_anchors_catalog.sql
+    002_anchors_catalog_capabilities.sql
+    003_anchor_callback_events.sql
+```
+
+## HTTP endpoints
+
+### `/api/compare-routes` (POST)
+
+Main route comparison endpoint.
+
+**Request:**
+```json
+{
+  "origin": "US",
+  "destination": "MX",
+  "amount": 1000
+}
+```
+
+**Response:**
+```json
+{
+  "routes": [
+    {
+      "id": "route-abc123",
+      "originAnchor": {
+        "name": "MoneyGram Access",
+        "country": "US",
+        "currency": "USD"
+      },
+      "destinationAnchor": {
+        "name": "MoneyGram Access",
+        "country": "MX",
+        "currency": "MXN"
+      },
+      "feePercentage": 2.4,
+      "feeAmount": 24.00,
+      "estimatedTime": "8 min",
+      "exchangeRate": 18.5,
+      "receivedAmount": 18060,
+      "available": true,
+      "recommended": true
+    }
+  ],
+  "meta": {
+    "origin": "US",
+    "destination": "MX",
+    "amount": 1000,
+    "queriedAt": "2026-03-03T15:30:00Z"
+  }
+}
+```
+
+**Implementation:**
+```typescript
+// api/compare-routes.ts
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
+  // 1. CORS handling
+  if (handleCorsPreflight(req, res, ["POST", "OPTIONS"])) return;
+  applyCors(req, res, ["POST", "OPTIONS"]);
+
+  // 2. Validate method
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  // 3. Parse and validate body
+  const parsed = readJsonBody(req);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: "Invalid request body" });
+  }
+
+  const parsedInput = parseCompareRoutesInput(parsed.value);
+  if (!parsedInput.ok) {
+    return res.status(400).json({ error: parsedInput.error });
+  }
+
+  // 4. Call business logic
+  try {
+    const result = await compareRoutesWithAnchors(parsedInput.value);
+    return res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return res.status(500).json({ error: message });
+  }
+}
+```
+
+### `/api/anchors/countries` (GET)
+
+Returns list of countries with active anchors.
+
+**Response:**
+```json
+[
+  { "code": "US", "name": "United States" },
+  { "code": "MX", "name": "Mexico" },
+  { "code": "BR", "name": "Brazil" }
+]
+```
+
+### `/api/anchors/catalog` (GET)
+
+List all anchors with filtering.
+
+**Query parameters:**
+- `country`: Filter by country (ISO 2-letter code)
+- `type`: Filter by type (`on-ramp` or `off-ramp`)
+- `operationalOnly`: Only return operational anchors
+
+**Example:**
+```bash
+curl "https://api.payonproof.com/api/anchors/catalog?country=US&type=on-ramp&operationalOnly=true"
+```
+
+## Business logic layer
+
+### Route comparison service
+
+Location: `lib/remittances/compare/service.ts`
+
+**Core function:**
+```typescript
+export async function compareRoutesWithAnchors(input: CompareRoutesInput) {
+  // 1. Fetch anchors from database
+  const anchors = await getAnchorsForCorridor({
+    origin: input.origin,
+    destination: input.destination,
+  });
+
+  // 2. Resolve runtime capabilities (SEP endpoints, fees)
+  const runtimes = await Promise.all(anchors.map(resolveAnchorRuntime));
+
+  // 3. Filter operational anchors
+  const originAnchors = runtimes.filter(
+    (r) => r.catalog.type === "on-ramp" && r.operational
+  );
+  const destinationAnchors = runtimes.filter(
+    (r) => r.catalog.type === "off-ramp" && r.operational
+  );
+
+  // 4. Fetch exchange rate
+  const exchangeRate = await getFxRate(
+    originAnchors[0].catalog.currency,
+    destinationAnchors[0].catalog.currency
+  );
+
+  // 5. Build route matrix (origin × destination)
+  const routes: RemittanceRoute[] = [];
+  for (const originAnchor of originAnchors) {
+    for (const destinationAnchor of destinationAnchors) {
+      routes.push(buildRoute(input, originAnchor, destinationAnchor, exchangeRate));
+    }
+  }
+
+  // 6. Score and rank routes
+  const scored = scoreRoutes(routes).slice(0, MAX_ROUTES);
+
+  return { routes: scored, meta: { /* diagnostics */ } };
+}
+```
+
+### Anchor runtime resolution
+
+Resolves live SEP capabilities for each anchor:
+
+```typescript
+async function resolveAnchorRuntime(anchor: AnchorCatalogEntry): Promise<AnchorRuntime> {
+  // Check if cached capabilities are fresh
+  const lastCheckedAtMs = Date.parse(anchor.capabilities.lastCheckedAt);
+  const shouldRefresh = Date.now() - lastCheckedAtMs > CAPABILITY_REFRESH_MS;
+
+  if (!shouldRefresh) {
+    // Use cached capabilities
+    return {
+      catalog: anchor,
+      sep: anchor.capabilities,
+      endpoints: { /* cached endpoints */ },
+      operational: anchor.capabilities.operational,
+    };
+  }
+
+  // Refresh from stellar.toml and SEP endpoints
+  try {
+    const resolved = await resolveAnchorCapabilities({
+      domain: anchor.domain,
+      assetCode: anchor.currency,
+    });
+
+    // Validate operational status
+    const operational = Boolean(
+      resolved.sep.sep10 &&
+      resolved.sep.sep24 &&
+      resolved.endpoints.webAuthEndpoint &&
+      resolved.endpoints.transferServerSep24
+    );
+
+    const runtime: AnchorRuntime = {
+      catalog: anchor,
+      sep: resolved.sep,
+      endpoints: resolved.endpoints,
+      operational,
+      diagnostics: resolved.diagnostics,
+      fees: resolved.fees,
+    };
+
+    // Update database with fresh capabilities
+    await updateAnchorCapabilities({
+      id: anchor.id,
+      ...runtime.sep,
+      ...runtime.endpoints,
+      operational,
+      lastCheckedAt: new Date().toISOString(),
+    });
+
+    return runtime;
+  } catch (error) {
+    // Mark as offline on error
+    return {
+      catalog: anchor,
+      sep: { sep24: false, sep6: false, sep31: false },
+      operational: false,
+      diagnostics: [`Capability resolution error: ${error.message}`],
+    };
+  }
+}
+```
+
+<Info>
+Capabilities are cached for 10 minutes to reduce latency. After the cache expires, the next route comparison triggers a refresh.
+</Info>
+
+### Route scoring algorithm
+
+Location: `lib/remittances/compare/scoring.ts`
+
+```typescript
+export function scoreRoutes(routes: RemittanceRoute[]): RemittanceRoute[] {
+  const scored = routes.map((route) => {
+    let score = 100;
+
+    // Penalize higher fees (most important)
+    score -= route.feePercentage * 10;
+
+    // Reward faster routes
+    score += (30 - route.estimatedMinutes) * 0.5;
+
+    // Bonus for escrow protection
+    if (route.escrow) score += 5;
+
+    // Penalty for risks
+    score -= route.risks.length * 3;
+
+    return { ...route, score: Math.max(0, score) };
+  });
+
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+
+  // Mark top route as recommended
+  if (scored.length > 0) {
+    scored[0].recommended = true;
+  }
+
+  return scored;
+}
+```
+
+## Provider layer: Stellar integration
+
+### SEP-1: Anchor discovery
+
+Location: `lib/stellar/sep1.ts`
+
+```typescript
+export async function discoverAnchorFromDomain(
+  input: Sep1DiscoveryInput
+): Promise<Sep1DiscoveryResult> {
+  const domain = normalizeDomain(input.domain);
+  const stellarTomlUrl = `https://${domain}/.well-known/stellar.toml`;
+  
+  const response = await fetchWithTimeout(stellarTomlUrl, DEFAULT_TIMEOUT_MS);
+  if (!response.ok) {
+    throw new Error(`Failed to load stellar.toml (${response.status})`);
+  }
+
+  const text = await response.text();
+  const parsed = parseTomlFlat(text);
+
+  return {
+    domain,
+    stellarTomlUrl,
+    signingKey: parsed.SIGNING_KEY,
+    webAuthEndpoint: parsed.WEB_AUTH_ENDPOINT,
+    transferServerSep24: parsed.TRANSFER_SERVER_SEP0024,
+    transferServerSep6: parsed.TRANSFER_SERVER,
+    directPaymentServer: parsed.DIRECT_PAYMENT_SERVER,
+    kycServer: parsed.KYC_SERVER,
+    raw: parsed,
+  };
+}
+```
+
+### SEP-24: Hosted deposit/withdrawal
+
+Location: `lib/stellar/sep24.ts`
+
+```typescript
+export async function fetchSep24Info(input: Sep24InfoInput): Promise<{
+  infoUrl: string;
+  transferServerSep24: string;
+  info: unknown;
+}> {
+  let transferServer = input.transferServerSep24;
+
+  // Auto-discover if only domain provided
+  if (!transferServer && input.domain) {
+    const discovered = await discoverAnchorFromDomain({ domain: input.domain });
+    transferServer = discovered.transferServerSep24;
+  }
+
+  if (!transferServer) {
+    throw new Error("TRANSFER_SERVER_SEP0024 not found");
+  }
+
+  const infoUrl = `${transferServer}/info`;
+  const response = await fetchWithTimeout(infoUrl, DEFAULT_TIMEOUT_MS);
+
+  if (!response.ok) {
+    throw new Error(`Failed to load SEP-24 /info (${response.status})`);
+  }
+
+  const info = await response.json();
+  return { infoUrl, transferServerSep24: transferServer, info };
+}
+```
+
+### Capability resolution
+
+Location: `lib/stellar/capabilities.ts`
+
+```typescript
+export async function resolveAnchorCapabilities(input: {
+  domain: string;
+  assetCode: string;
+}): Promise<ResolvedAnchorCapabilities> {
+  const diagnostics: string[] = [];
+
+  // 1. Discover anchor from stellar.toml (SEP-1)
+  const sep1 = await discoverAnchorFromDomain({ domain: input.domain });
+
+  // 2. Check which SEPs are supported
+  const sep = {
+    sep24: Boolean(sep1.transferServerSep24),
+    sep6: Boolean(sep1.transferServerSep6),
+    sep31: Boolean(sep1.directPaymentServer),
+    sep10: Boolean(sep1.webAuthEndpoint),
+  };
+
+  // 3. Fetch SEP-24 /info for fees
+  let fees = { source: "default" as const };
+  if (sep1.transferServerSep24) {
+    try {
+      const r = await fetchSep24Info({ transferServerSep24: sep1.transferServerSep24 });
+      const extracted = extractFeeFromInfo(r.info, input.assetCode);
+      if (extracted) {
+        fees = { ...extracted, source: "sep24" };
+      }
+    } catch (error) {
+      diagnostics.push(`SEP-24 /info error: ${error.message}`);
+    }
+  }
+
+  // 4. Fallback to SEP-6 /info if needed
+  if (fees.source === "default" && sep1.transferServerSep6) {
+    try {
+      const r = await fetchSep6Info({ transferServerSep6: sep1.transferServerSep6 });
+      const extracted = extractFeeFromInfo(r.info, input.assetCode);
+      if (extracted) {
+        fees = { ...extracted, source: "sep6" };
+      }
+    } catch (error) {
+      diagnostics.push(`SEP-6 /info error: ${error.message}`);
+    }
+  }
+
+  return {
+    domain: sep1.domain,
+    sep,
+    endpoints: {
+      webAuthEndpoint: sep1.webAuthEndpoint,
+      transferServerSep24: sep1.transferServerSep24,
+      transferServerSep6: sep1.transferServerSep6,
+      directPaymentServer: sep1.directPaymentServer,
+      kycServer: sep1.kycServer,
+    },
+    fees,
+    diagnostics,
+  };
+}
+```
+
+## Repository layer: Database access
+
+### Anchors catalog repository
+
+Location: `lib/repositories/anchors-catalog.ts`
+
+```typescript
+export async function getAnchorsForCorridor(input: {
+  origin: string;
+  destination: string;
+}): Promise<AnchorCatalogEntry[]> {
+  try {
+    const supabase = getSupabaseAdmin();
+
+    const { data, error } = await supabase
+      .from("anchors_catalog")
+      .select("*")
+      .eq("active", true)
+      .in("country", [input.origin, input.destination])
+      .in("type", ["on-ramp", "off-ramp"]);
+
+    if (error) {
+      throw new Error(`anchors_catalog query failed: ${error.message}`);
+    }
+
+    return filterAnchors(data.map(mapCatalogRow));
+  } catch {
+    // Fallback to local JSON export
+    const fallback = loadLocalFallbackAnchors();
+    return filterAnchors(
+      fallback.filter(
+        (anchor) => anchor.country === input.origin || anchor.country === input.destination
+      )
+    );
+  }
+}
+```
+
+<Note>
+Local fallback ensures the API remains functional even if Supabase is temporarily unavailable.
+</Note>
+
+### Capability updates
+
+```typescript
+export async function updateAnchorCapabilities(
+  input: CapabilityUpdateInput
+): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  
+  const { error } = await supabase
+    .from("anchors_catalog")
+    .update({
+      sep24: input.sep24,
+      sep6: input.sep6,
+      sep31: input.sep31,
+      sep10: input.sep10,
+      operational: input.operational,
+      fee_fixed: input.feeFixed ?? null,
+      fee_percent: input.feePercent ?? null,
+      fee_source: input.feeSource ?? "default",
+      transfer_server_sep24: input.transferServerSep24 ?? null,
+      transfer_server_sep6: input.transferServerSep6 ?? null,
+      web_auth_endpoint: input.webAuthEndpoint ?? null,
+      diagnostics: input.diagnostics ?? [],
+      last_checked_at: input.lastCheckedAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.id);
+
+  if (error) {
+    throw new Error(`anchors_catalog update failed: ${error.message}`);
+  }
+}
+```
+
+## Database schema
+
+### `anchors_catalog` table
+
+```sql
+CREATE TABLE anchors_catalog (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  country TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('on-ramp', 'off-ramp')),
+  active BOOLEAN DEFAULT true,
+  sep24 BOOLEAN DEFAULT false,
+  sep6 BOOLEAN DEFAULT false,
+  sep31 BOOLEAN DEFAULT false,
+  sep10 BOOLEAN DEFAULT false,
+  operational BOOLEAN DEFAULT false,
+  fee_fixed NUMERIC,
+  fee_percent NUMERIC,
+  fee_source TEXT,
+  transfer_server_sep24 TEXT,
+  transfer_server_sep6 TEXT,
+  web_auth_endpoint TEXT,
+  direct_payment_server TEXT,
+  kyc_server TEXT,
+  diagnostics JSONB DEFAULT '[]',
+  last_checked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+## Environment configuration
+
+```bash
+# services/api/.env
+
+# Stellar network
+STELLAR_HORIZON_URL=https://horizon.stellar.org
+STELLAR_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+STELLAR_SIGNING_SECRET=S...
+
+# Supabase
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+# API configuration
+ANCHOR_ALLOWED_ASSETS=USDC,XLM
+ANCHOR_FALLBACK_FEE_PERCENT=1.5
+MAX_COMPARE_ROUTES=12
+```
+
+## Local development
+
+```bash
+cd services/api
+npm install
+npm run dev
+```
+
+Runs local server on `http://localhost:3001`.
+
+**Build process:**
+```bash
+npm run build:local  # Compiles TypeScript to .build/
+node .build/local-server.js
+```
+
+## Deployment
+
+Vercel automatically deploys each function in `api/` as a serverless endpoint.
+
+**Production checklist:**
+- Set all environment variables in Vercel dashboard
+- Run SQL migrations in Supabase
+- Test `/api/health` endpoint
+- Verify CORS configuration for frontend domain
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Stellar integration" icon="link" href="/architecture/stellar-integration">
+    Deep dive into SEP protocols and blockchain interactions
+  </Card>
+  <Card title="Frontend architecture" icon="window" href="/architecture/frontend">
+    Learn how the UI consumes these API endpoints
+  </Card>
+</CardGroup>

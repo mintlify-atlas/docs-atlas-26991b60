@@ -1,0 +1,303 @@
+---
+title: Database setup
+description: Set up and configure the Supabase database for PayOnProof
+---
+
+PayOnProof uses Supabase as its database backend. This guide walks you through setting up the required database schema.
+
+## Prerequisites
+
+- A Supabase account ([create one free](https://supabase.com))
+- Supabase project URL and service role key
+- Database client or Supabase SQL Editor access
+
+## Create a Supabase project
+
+<Steps>
+  <Step title="Create new project">
+    1. Log in to [Supabase Dashboard](https://app.supabase.com)
+    2. Click "New project"
+    3. Choose your organization
+    4. Enter a project name (e.g., `payonproof`)
+    5. Set a strong database password
+    6. Select a region close to your users
+    7. Click "Create new project"
+  </Step>
+
+  <Step title="Get connection credentials">
+    Once your project is ready:
+    
+    1. Go to **Settings** → **API**
+    2. Copy the **Project URL** (this is your `SUPABASE_URL`)
+    3. Copy the **service_role** key (this is your `SUPABASE_SERVICE_ROLE_KEY`)
+    
+    <Warning>
+      The service role key has full database access. Never expose it in frontend code or commit it to version control.
+    </Warning>
+  </Step>
+
+  <Step title="Add credentials to environment">
+    Update your API service environment file:
+    
+    ```bash services/api/.env
+    SUPABASE_URL=https://your-project.supabase.co
+    SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+    ```
+  </Step>
+</Steps>
+
+## Run database migrations
+
+PayOnProof includes SQL migration files in `services/api/sql/`. Run these in order:
+
+### 1. Anchors catalog table
+
+This table stores the anchor registry used for route discovery.
+
+**File:** `services/api/sql/001_anchors_catalog.sql`
+
+<CodeGroup>
+```sql Full migration
+create table if not exists public.anchors_catalog (
+  id text primary key,
+  name text not null,
+  domain text not null,
+  country text not null,
+  currency text not null,
+  type text not null check (type in ('on-ramp', 'off-ramp')),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists anchors_catalog_country_idx
+  on public.anchors_catalog (country);
+
+create index if not exists anchors_catalog_type_idx
+  on public.anchors_catalog (type);
+
+create index if not exists anchors_catalog_active_idx
+  on public.anchors_catalog (active);
+
+-- Seed minimal corridor US -> MX
+insert into public.anchors_catalog (id, name, domain, country, currency, type, active)
+values
+  ('anchor-moneygram-us', 'MoneyGram', 'stellar.moneygram.com', 'US', 'USD', 'on-ramp', true),
+  ('anchor-bitso-mx', 'Bitso', 'bitso.com', 'MX', 'MXN', 'off-ramp', true)
+on conflict (id) do update
+set
+  name = excluded.name,
+  domain = excluded.domain,
+  country = excluded.country,
+  currency = excluded.currency,
+  type = excluded.type,
+  active = excluded.active,
+  updated_at = now();
+```
+</CodeGroup>
+
+**To run:**
+
+1. Go to Supabase Dashboard → **SQL Editor**
+2. Click **New query**
+3. Copy and paste the contents of `001_anchors_catalog.sql`
+4. Click **Run**
+
+<Note>
+  This migration includes seed data for a US → MX corridor (MoneyGram and Bitso). You can modify or remove this based on your needs.
+</Note>
+
+### 2. Anchor capabilities table
+
+This migration adds columns for SEP (Stellar Ecosystem Proposal) capabilities and operational status.
+
+**File:** `services/api/sql/002_anchors_catalog_capabilities.sql`
+
+<CodeGroup>
+```sql Full migration
+alter table if exists public.anchors_catalog
+  add column if not exists sep24 boolean not null default false,
+  add column if not exists sep6 boolean not null default false,
+  add column if not exists sep31 boolean not null default false,
+  add column if not exists sep10 boolean not null default false,
+  add column if not exists operational boolean not null default false,
+  add column if not exists fee_fixed numeric,
+  add column if not exists fee_percent numeric,
+  add column if not exists fee_source text not null default 'default',
+  add column if not exists transfer_server_sep24 text,
+  add column if not exists transfer_server_sep6 text,
+  add column if not exists web_auth_endpoint text,
+  add column if not exists direct_payment_server text,
+  add column if not exists kyc_server text,
+  add column if not exists last_checked_at timestamptz,
+  add column if not exists diagnostics jsonb not null default '[]'::jsonb;
+
+create index if not exists anchors_catalog_operational_idx
+  on public.anchors_catalog (operational);
+
+create index if not exists anchors_catalog_last_checked_idx
+  on public.anchors_catalog (last_checked_at);
+```
+</CodeGroup>
+
+**To run:**
+
+1. Go to Supabase Dashboard → **SQL Editor**
+2. Click **New query**
+3. Copy and paste the contents of `002_anchors_catalog_capabilities.sql`
+4. Click **Run**
+
+### 3. Anchor callback events table
+
+This table stores callback events from anchors during transaction processing.
+
+**File:** `services/api/sql/003_anchor_callback_events.sql`
+
+<CodeGroup>
+```sql Full migration
+create table if not exists public.anchor_callback_events (
+  transaction_id text not null,
+  callback_token text not null,
+  status text,
+  stellar_tx_hash text,
+  external_transaction_id text,
+  source_anchor text,
+  raw_payload jsonb not null default '{}'::jsonb,
+  received_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (transaction_id, callback_token)
+);
+
+create index if not exists idx_anchor_callback_events_tx_hash
+  on public.anchor_callback_events (stellar_tx_hash);
+```
+</CodeGroup>
+
+**To run:**
+
+1. Go to Supabase Dashboard → **SQL Editor**
+2. Click **New query**
+3. Copy and paste the contents of `003_anchor_callback_events.sql`
+4. Click **Run**
+
+## Database schema overview
+
+### anchors_catalog
+
+Stores registered Stellar anchors and their capabilities.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | text | Primary key, unique anchor identifier |
+| `name` | text | Human-readable anchor name |
+| `domain` | text | Anchor domain (e.g., `stellar.moneygram.com`) |
+| `country` | text | Country code (e.g., `US`, `MX`) |
+| `currency` | text | Currency code (e.g., `USD`, `MXN`) |
+| `type` | text | `on-ramp` or `off-ramp` |
+| `active` | boolean | Whether the anchor is currently active |
+| `sep24` | boolean | Supports SEP-24 (hosted deposit/withdrawal) |
+| `sep6` | boolean | Supports SEP-6 (deposit/withdrawal API) |
+| `sep31` | boolean | Supports SEP-31 (cross-border payments) |
+| `sep10` | boolean | Supports SEP-10 (Stellar Web Auth) |
+| `operational` | boolean | Whether the anchor is currently operational |
+| `fee_fixed` | numeric | Fixed fee amount |
+| `fee_percent` | numeric | Percentage-based fee |
+| `transfer_server_sep24` | text | SEP-24 transfer server URL |
+| `transfer_server_sep6` | text | SEP-6 transfer server URL |
+| `web_auth_endpoint` | text | SEP-10 authentication endpoint |
+| `direct_payment_server` | text | SEP-31 direct payment server |
+| `last_checked_at` | timestamptz | Last capability check timestamp |
+| `diagnostics` | jsonb | Diagnostic information array |
+| `created_at` | timestamptz | Record creation timestamp |
+| `updated_at` | timestamptz | Record update timestamp |
+
+### anchor_callback_events
+
+Stores webhook callbacks from anchors during transaction processing.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `transaction_id` | text | Transaction identifier (primary key) |
+| `callback_token` | text | Callback authentication token (primary key) |
+| `status` | text | Transaction status |
+| `stellar_tx_hash` | text | Stellar blockchain transaction hash |
+| `external_transaction_id` | text | External transaction ID from anchor |
+| `source_anchor` | text | Source anchor identifier |
+| `raw_payload` | jsonb | Complete callback payload |
+| `received_at` | timestamptz | Callback received timestamp |
+| `updated_at` | timestamptz | Record update timestamp |
+
+## Row Level Security (RLS)
+
+For production deployments, consider enabling RLS on user-facing tables:
+
+```sql
+-- Enable RLS on anchors_catalog (if needed)
+alter table public.anchors_catalog enable row level security;
+
+-- Allow public read access to active anchors
+create policy "Public read access to active anchors"
+  on public.anchors_catalog
+  for select
+  using (active = true);
+```
+
+<Warning>
+  The service role key bypasses RLS policies. Only enable RLS if you plan to use anon/authenticated keys from the frontend.
+</Warning>
+
+## Verifying the setup
+
+Verify your database is set up correctly:
+
+<Steps>
+  <Step title="Check tables exist">
+    In Supabase Dashboard → **Table Editor**, you should see:
+    - `anchors_catalog`
+    - `anchor_callback_events`
+  </Step>
+
+  <Step title="Verify seed data">
+    Check that the seed data was inserted:
+    
+    ```sql
+    select * from public.anchors_catalog;
+    ```
+    
+    You should see MoneyGram (US) and Bitso (MX) entries.
+  </Step>
+
+  <Step title="Test API connection">
+    Start your API service and test the catalog endpoint:
+    
+    ```bash
+    curl http://localhost:3001/api/anchors/catalog
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Connection errors
+
+- Verify `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in your `.env` file
+- Check that your Supabase project is active and not paused
+- Ensure you're using the service role key, not the anon key
+
+### Migration failures
+
+- Run migrations in order: 001, 002, 003
+- Check for syntax errors in the SQL editor
+- Verify you have sufficient database permissions
+
+### Missing seed data
+
+- The `on conflict` clause will update existing records
+- If seed data is missing, re-run migration 001
+
+## Next steps
+
+- [Configure environment variables](/deployment/environment-variables)
+- [Deploy to Vercel](/deployment/vercel-deployment)
+- [Set up anchor catalog sync](/deployment/anchor-catalog-sync)
+- [Configure monitoring](/deployment/monitoring)

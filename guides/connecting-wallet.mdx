@@ -1,0 +1,161 @@
+---
+title: Connecting your wallet
+description: Learn how to connect your Freighter wallet to PayOnProof to send cross-border payments on the Stellar network.
+---
+
+PayOnProof uses the Freighter wallet to authenticate your identity and sign transactions on the Stellar network. This guide will walk you through connecting your wallet for the first time.
+
+## Prerequisites
+
+Before you can connect your wallet, you'll need:
+
+- The Freighter browser extension installed ([download here](https://www.freighter.app/))
+- A Stellar account set up in Freighter
+- Your wallet configured to the correct network (Testnet for staging, Mainnet for production)
+
+<Note>
+PayOnProof uses Stellar as invisible infrastructure. You don't need to understand blockchain technology to use the platform—the wallet connection simply allows you to authorize payments securely.
+</Note>
+
+## Connecting Freighter
+
+Follow these steps to connect your Freighter wallet:
+
+<Steps>
+  <Step title="Open the connection modal">
+    When you reach the transaction execution step, click the **Connect Wallet** button or you'll automatically see a connection prompt.
+    
+    The connection modal displays the Freighter option with its icon and name.
+  </Step>
+
+  <Step title="Click on Freighter">
+    Click the **Freighter** button in the wallet list. This will trigger the Freighter browser extension to open.
+    
+    <Tip>
+    If Freighter doesn't open automatically, check that the extension is enabled in your browser and not blocked by popup blockers.
+    </Tip>
+  </Step>
+
+  <Step title="Approve the connection">
+    In the Freighter popup, review the connection request and click **Approve** to grant PayOnProof access to your public address.
+    
+    PayOnProof will:
+    - Read your public Stellar address
+    - Request transaction signatures when you send payments
+    - **Never** access your private keys or seed phrase
+  </Step>
+
+  <Step title="Verify the connection">
+    Once connected, the modal will close automatically after a brief delay. You'll see your wallet address displayed in the transaction confirmation screen.
+  </Step>
+</Steps>
+
+## Network configuration
+
+PayOnProof validates that your Freighter wallet is connected to the correct Stellar network before allowing transactions.
+
+### For staging environment
+
+If you're using the staging version of PayOnProof:
+
+1. Open the Freighter extension
+2. Click the network dropdown (usually shows "Mainnet" or "Testnet")
+3. Select **Testnet** from the list
+4. Try connecting again
+
+### For production environment
+
+If you're using the production version of PayOnProof:
+
+1. Open the Freighter extension
+2. Click the network dropdown
+3. Select **Mainnet** from the list
+4. Try connecting again
+
+<Warning>
+If your wallet is connected to the wrong network, you'll see an error message:
+
+**Staging**: "Freighter must be connected to Stellar Testnet"
+
+**Production**: "Freighter must be connected to Stellar Mainnet"
+
+Switch your network in Freighter and retry the connection.
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="Connection failed error">
+If you see a "Connection failed" error:
+
+- Ensure Freighter is installed and unlocked
+- Check that you approved the connection request (you may have accidentally rejected it)
+- Refresh the page and try again
+- Click **Retry** in the error notification
+</Accordion>
+
+<Accordion title="Freighter is not installed error">
+If you see "Freighter is not installed":
+
+1. Install the Freighter browser extension from [freighter.app](https://www.freighter.app/)
+2. Create or import a Stellar account
+3. Return to PayOnProof and click **Connect Wallet** again
+</Accordion>
+
+<Accordion title="Wrong network error">
+If you see a network mismatch error:
+
+1. Open Freighter
+2. Switch to the correct network (Testnet for staging, Mainnet for production)
+3. Click **Retry** in the PayOnProof modal
+
+The expected network is determined by the `NEXT_PUBLIC_POP_ENV` environment variable.
+</Accordion>
+
+<Accordion title="Cannot close the modal">
+The connection modal is designed to prevent accidental closure during the connection process:
+
+- You can close it by clicking the **X** button in the top right
+- You can click outside the modal to close it (but not while connecting)
+- If the connection is in progress, the close button will be disabled
+
+Wait for the connection to complete or fail before attempting to close.
+</Accordion>
+
+## Security best practices
+
+<Warning>
+**Never share your seed phrase or private keys**
+
+PayOnProof will never ask for your seed phrase, private keys, or password. Only approve connection requests and transaction signatures through the official Freighter extension popup.
+</Warning>
+
+When you connect your wallet:
+
+- PayOnProof can only read your **public** Stellar address
+- All transactions require explicit approval through Freighter
+- Your private keys remain secure in the Freighter extension
+- You can disconnect at any time by clicking **Cancel** in the error state
+
+## What happens next
+
+Once your wallet is connected:
+
+1. Your public Stellar address is displayed in the transaction execution screen
+2. You can review transfer details including fees and exchange rates
+3. When you click **Confirm & Start Transfer**, Freighter will ask you to sign the transaction
+4. After signing, the transfer begins and you'll receive anchor flow URLs
+
+<Tip>
+You only need to connect your wallet once per session. The connection persists until you refresh the page or disconnect manually.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sending payments" href="/guides/sending-payments">
+    Learn how to send cross-border payments after connecting your wallet
+  </Card>
+  <Card title="Understanding fees" href="/guides/understanding-fees">
+    Learn about the fee structure for transfers
+  </Card>
+</CardGroup>

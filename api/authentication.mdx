@@ -1,0 +1,139 @@
+---
+title: Authentication
+description: Authentication and authorization methods for PayOnProof API
+---
+
+The PayOnProof API uses different authentication methods depending on the endpoint type.
+
+## Public endpoints
+
+Most API endpoints are publicly accessible and require no authentication:
+
+- `/api/health`
+- `/api/compare-routes`
+- `/api/execute-transfer`
+- `/api/generate-proof`
+- `/api/anchors/catalog`
+- `/api/anchors/countries`
+- `/api/anchors/diagnostics`
+
+These endpoints support CORS and can be called directly from frontend applications.
+
+## Administrative endpoints
+
+Administrative operations require authorization:
+
+### Cron secret authentication
+
+For `/api/anchors/ops` endpoint (sync, import_directory, refresh_capabilities actions):
+
+**Query parameter method:**
+
+```bash
+curl "https://api.payonproof.com/api/anchors/ops?action=sync&secret=YOUR_CRON_SECRET"
+```
+
+**Environment variable:**
+
+```bash
+CRON_SECRET=your_secret_here
+```
+
+The endpoint checks:
+1. Query parameter `?secret=...` matches `CRON_SECRET` environment variable
+2. OR Vercel cron header `x-vercel-cron` is present (for scheduled cron jobs)
+3. OR `NODE_ENV !== "production"` (development only)
+
+### SEP-10 client domain signing
+
+For executing transfers with certain anchors (MoneyGram, etc.), the backend signs SEP-10 challenges on behalf of the client domain.
+
+**Required environment variables:**
+
+```bash
+# Client domain for SEP-10 authentication
+SEP10_CLIENT_DOMAIN=app.payonproof.com
+
+# Stellar secret key for signing client_domain operations
+SEP10_CLIENT_DOMAIN_SIGNING_SECRET=S...
+
+# Whether to send client_domain in SEP-10 requests
+SEP10_SEND_CLIENT_DOMAIN=true
+
+# Whether to require client_domain signature for all anchors
+SEP10_REQUIRE_CLIENT_SIGNATURE=false
+```
+
+The signing secret must correspond to the `SIGNING_KEY` declared in your domain's `/.well-known/stellar.toml` file.
+
+### Anchor callback authentication
+
+SEP-24 callbacks from anchors are authenticated using:
+
+```bash
+ANCHOR_CALLBACK_SECRET=strong_random_secret_min_24_chars
+```
+
+Callbacks must include this secret as a query parameter:
+
+```
+https://api.payonproof.com/api/anchors/sep24/callback?transactionId=...&callbackToken=...&secret=...
+```
+
+## Security best practices
+
+<Warning>
+Never expose secrets in client-side code. All sensitive operations (SEP-10 signing, callback verification) happen server-side.
+</Warning>
+
+### Production requirements
+
+1. **Strong secrets**: In production, secrets must be:
+   - At least 24 characters long
+   - Cryptographically random
+   - Not contain `change_me` or similar placeholders
+
+2. **Public domains**: `SEP10_CLIENT_DOMAIN` must be a public domain, not `localhost` or local addresses.
+
+3. **HTTPS only**: All anchor interactions require HTTPS endpoints.
+
+### Environment-specific configuration
+
+```bash
+# Environment: staging | production
+POP_ENV=production
+
+# Stellar network
+STELLAR_NETWORK=public
+STELLAR_HORIZON_URL=https://horizon.stellar.org
+
+# Execution state encryption (for status polling)
+EXECUTION_STATE_SECRET=strong_random_secret_min_24_chars
+```
+
+## Testing authentication
+
+To test cron authentication in development:
+
+```bash
+curl -X POST https://api.payonproof.com/api/anchors/ops \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "refresh_capabilities",
+    "limit": 5
+  }' \
+  "?secret=your_cron_secret"
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok",
+  "action": "refresh_capabilities",
+  "refreshed": 5,
+  "ok": 4,
+  "errors": 1,
+  "results": [...]
+}
+```

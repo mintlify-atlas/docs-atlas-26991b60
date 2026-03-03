@@ -1,0 +1,380 @@
+---
+title: Proof generation
+description: Generate cryptographically verifiable payment proofs anchored to Stellar blockchain transactions
+---
+
+After a payment settles on Stellar, PayOnProof generates a verifiable proof that anyone can validate using the blockchain transaction hash.
+
+## What is a payment proof?
+
+A payment proof is a structured document containing:
+
+- **Transaction metadata** - Amount, currencies, sender, recipient
+- **Fee breakdown** - Exact fees paid at each step
+- **Exchange rate** - Rate used for currency conversion
+- **Stellar transaction hash** - Immutable blockchain reference
+- **Verification URL** - Direct link to view the transaction on Stellar Expert
+
+The proof is **not stored on-chain**. Only the transaction hash serves as the cryptographic anchor.
+
+<Info>
+Think of the proof as a receipt that references an on-chain transaction. The transaction hash is the source of truth.
+</Info>
+
+## How proof generation works
+
+<Steps>
+  <Step title="Verify transaction on Horizon">
+    PayOnProof queries Stellar Horizon to confirm the transaction exists and succeeded
+  </Step>
+  <Step title="Build proof payload">
+    Combine transaction data with route metadata to create the proof document
+  </Step>
+  <Step title="Return proof to user">
+    Proof is returned as JSON and displayed in the UI
+  </Step>
+</Steps>
+
+## Real code example
+
+Here's the complete proof generation endpoint:
+
+```typescript services/api/api/generate-proof.ts
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { getStellarConfig } from "../lib/stellar.js";
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const transactionId = asString(parsed.value.transactionId);
+  const stellarTxHash = normalizeHash(asString(parsed.value.stellarTxHash));
+
+  if (!transactionId || !stellarTxHash) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  // Verify transaction exists on Stellar Horizon
+  await verifyTransactionOnHorizon(stellarTxHash);
+
+  // Build proof payload
+  return res.status(200).json({
+    proof: {
+      id: `POP-PROOF-${Date.now()}`,
+      transactionId,
+      timestamp: new Date().toISOString(),
+      sender: "Wallet Holder",
+      receiver: "Anchor Settlement",
+      originAmount: asNumber(parsed.value.originAmount) ?? 0,
+      originCurrency: asString(parsed.value.originCurrency) || "USDC",
+      destinationAmount: asNumber(parsed.value.destinationAmount) ?? 0,
+      destinationCurrency: asString(parsed.value.destinationCurrency) || "USDC",
+      exchangeRate: asNumber(parsed.value.exchangeRate) ?? 1,
+      totalFees: asNumber(parsed.value.totalFees) ?? 0,
+      route: asString(parsed.value.route) || "Anchor route",
+      stellarTxHash,
+      status: "verified",
+      verificationUrl: `https://stellar.expert/explorer/public/tx/${stellarTxHash}`
+    }
+  });
+}
+```
+
+### Horizon verification
+
+Before generating a proof, PayOnProof verifies the transaction exists:
+
+```typescript
+async function verifyTransactionOnHorizon(hash: string): Promise<void> {
+  const { horizonUrl } = getStellarConfig();
+  const endpoint = `${horizonUrl}/transactions/${encodeURIComponent(hash)}`;
+
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: { Accept: "application/json" }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Transaction not found on Horizon (${response.status})`);
+  }
+}
+```
+
+<Note>
+If the transaction doesn't exist on Horizon, proof generation fails. This prevents fake proofs.
+</Note>
+
+## API request/response
+
+### Request
+
+```bash
+POST /api/generate-proof
+Content-Type: application/json
+
+{
+  "transactionId": "POP-1709481234567-A1B2C3",
+  "stellarTxHash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6",
+  "route": "MoneyGram (US) → MoneyGram (MX)",
+  "originAmount": 500,
+  "originCurrency": "USDC",
+  "destinationAmount": 8433.25,
+  "destinationCurrency": "MXN",
+  "exchangeRate": 17.25,
+  "totalFees": 11
+}
+```
+
+### Response
+
+```json
+{
+  "proof": {
+    "id": "POP-PROOF-1709481234999",
+    "transactionId": "POP-1709481234567-A1B2C3",
+    "timestamp": "2026-03-03T16:00:00.000Z",
+    "sender": "Wallet Holder",
+    "receiver": "Anchor Settlement",
+    "originAmount": 500,
+    "originCurrency": "USDC",
+    "destinationAmount": 8433.25,
+    "destinationCurrency": "MXN",
+    "exchangeRate": 17.25,
+    "totalFees": 11,
+    "route": "MoneyGram (US) → MoneyGram (MX)",
+    "stellarTxHash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6",
+    "status": "verified",
+    "verificationUrl": "https://stellar.expert/explorer/public/tx/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6"
+  }
+}
+```
+
+## UI flow
+
+Users see the proof in a card view after payment execution completes:
+
+```tsx services/web/components/proof-of-payment.tsx
+<ProofOfPaymentView transaction={transaction} />
+```
+
+### Proof card sections
+
+**Header**
+
+- Checkmark icon with "Payment Complete" message
+- Transaction ID
+- Timestamp
+
+**Amounts**
+
+- You sent: `500 USDC`
+- Recipient gets: `8,433.25 MXN`
+- Exchange rate: `1 USDC = 17.25 MXN`
+- Total fees: `11 USDC (2.2%)`
+
+**Route**
+
+- Origin anchor: MoneyGram (US)
+- Destination anchor: MoneyGram (MX)
+
+**Blockchain proof**
+
+- Stellar transaction hash (truncated with copy button)
+- "View on Stellar Expert" link
+- "Download proof as PDF" button (future)
+
+**Actions**
+
+- "New Transfer" button to restart flow
+- "Share Proof" button to generate shareable link
+
+<Tip>
+The "View on Stellar Expert" button opens `https://stellar.expert/explorer/public/tx/{hash}` where anyone can verify the transaction independently.
+</Tip>
+
+## Proof verification
+
+Anyone can verify a proof by checking the Stellar transaction:
+
+### Manual verification steps
+
+1. Copy the `stellarTxHash` from the proof
+2. Open Stellar Expert: `https://stellar.expert/explorer/public/tx/{hash}`
+3. Verify:
+   - Transaction succeeded (green checkmark)
+   - Source account matches sender
+   - Memo matches `transactionId`
+   - Amount and asset match proof claims
+
+### Automated verification
+
+You can build a verification endpoint:
+
+```typescript
+export async function verifyProof(proof: Proof): Promise<boolean> {
+  const { horizonUrl } = getStellarConfig();
+  const response = await fetch(
+    `${horizonUrl}/transactions/${proof.stellarTxHash}`
+  );
+
+  if (!response.ok) return false;
+
+  const tx = await response.json();
+  
+  // Verify transaction succeeded
+  if (!tx.successful) return false;
+  
+  // Verify memo matches transaction ID
+  if (tx.memo !== proof.transactionId) return false;
+  
+  // Additional checks...
+  
+  return true;
+}
+```
+
+<Info>
+Stellar transactions are immutable and censorship-resistant. Once a transaction is on-chain, no one (not even PayOnProof) can alter or delete it.
+</Info>
+
+## Proof storage (off-chain)
+
+PayOnProof does **not** store proofs on-chain. Instead:
+
+- **Ephemeral proofs** - Generated on-demand from transaction hash + metadata
+- **User-side storage** - Users can download proofs as PDF/JSON for their records
+- **Optional database** - PayOnProof can cache proofs in Supabase for compliance/auditing
+
+<Warning>
+If you need regulatory compliance, implement proof archival in your Supabase schema:
+
+```sql
+CREATE TABLE payment_proofs (
+  id TEXT PRIMARY KEY,
+  transaction_id TEXT NOT NULL,
+  stellar_tx_hash TEXT NOT NULL,
+  proof_data JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+</Warning>
+
+## Proof data schema
+
+```typescript
+interface PaymentProof {
+  id: string;                    // POP-PROOF-{timestamp}
+  transactionId: string;         // POP-{timestamp}-{random}
+  timestamp: string;             // ISO 8601 timestamp
+  sender: string;                // Wallet holder or entity name
+  receiver: string;              // Recipient or anchor name
+  originAmount: number;          // Amount sent
+  originCurrency: string;        // Asset code (USDC, XLM, etc.)
+  destinationAmount: number;     // Amount received
+  destinationCurrency: string;   // Asset code (MXN, EUR, etc.)
+  exchangeRate: number;          // Conversion rate used
+  totalFees: number;             // Total fees in origin currency
+  route: string;                 // Human-readable route description
+  stellarTxHash: string;         // Stellar transaction hash (64 chars)
+  status: "verified" | "pending" | "failed";
+  verificationUrl: string;       // Stellar Expert URL
+}
+```
+
+## Edge cases
+
+### Transaction not found on Horizon
+
+```json
+{
+  "error": "Transaction not found on Horizon (404)"
+}
+```
+
+**Cause:** The `stellarTxHash` is invalid or the transaction hasn't propagated to Horizon yet.
+
+**Fix:** Wait 5-10 seconds and retry. Stellar transaction finality is ~5 seconds.
+
+### Transaction failed on-chain
+
+If the Stellar transaction succeeded in being included in a ledger but had an internal failure, Horizon will return `successful: false`.
+
+PayOnProof currently doesn't check this field, so you could generate a proof for a failed transaction.
+
+**Fix:** Add success verification:
+
+```typescript
+const tx = await response.json();
+if (!tx.successful) {
+  throw new Error("Transaction exists but failed on-chain");
+}
+```
+
+### Memo mismatch
+
+If the on-chain transaction memo doesn't match the `transactionId`, it might indicate:
+
+- Wrong transaction hash provided
+- Anchor used a different memo format
+- Manual transaction submitted outside PayOnProof
+
+**Fix:** Implement memo validation in proof generation.
+
+## Future enhancements
+
+<CardGroup cols={2}>
+  <Card title="PDF export" icon="file-pdf">
+    Generate printable proof documents with QR codes for verification
+  </Card>
+  <Card title="Proof sharing" icon="share">
+    Create shareable links like `payonproof.com/proof/{id}` that load the proof
+  </Card>
+  <Card title="Multi-signature proofs" icon="users">
+    Support proofs for transactions requiring multiple signers
+  </Card>
+  <Card title="Proof analytics" icon="chart-line">
+    Track total payment volume, average fees, and corridor usage
+  </Card>
+</CardGroup>
+
+## Security considerations
+
+### Transaction hash as proof-of-work
+
+Stellar transaction hashes are derived from the transaction envelope using SHA-256. They cannot be forged without:
+
+1. Controlling a funded Stellar account
+2. Paying network fees (0.00001 XLM minimum)
+3. Getting the transaction into a validated ledger
+
+This makes fake proofs economically infeasible.
+
+### Memo field authenticity
+
+PayOnProof uses the memo field to link on-chain transactions to off-chain transfer IDs:
+
+```typescript
+memo: transactionId  // "POP-1709481234567-A1B2C3"
+```
+
+Anyone can verify the memo matches the proof's `transactionId` by checking Stellar Expert.
+
+### Proof tampering detection
+
+If someone modifies a proof JSON (e.g., changing amounts), verification will fail because:
+
+- The `stellarTxHash` won't match the claimed amounts
+- Horizon shows the true on-chain amounts
+- The proof becomes provably false
+
+<Info>
+For additional tamper-proofing, you could hash the proof payload and store the hash on-chain using Stellar's ManageData operation.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Route comparison" href="/features/route-comparison" icon="arrow-left">
+    Learn how routes are discovered and scored
+  </Card>
+  <Card title="Anchor management" href="/features/anchor-management" icon="database">
+    Understand how anchors are validated and synced
+  </Card>
+</CardGroup>

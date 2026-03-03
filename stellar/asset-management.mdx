@@ -1,0 +1,328 @@
+---
+title: Asset management
+description: Discovering, validating, and working with Stellar assets
+---
+
+PayOnProof includes utilities for managing Stellar assets, including validation, formatting, and integration with anchor discovery. Assets are the fundamental unit of value transfer on the Stellar network.
+
+## Asset structure
+
+While the source code doesn't include a dedicated asset.ts implementation with full asset management, asset handling is integrated throughout the Stellar modules.
+
+### Asset identification
+
+Stellar assets are identified by:
+
+- **Asset code**: 1-12 alphanumeric characters (e.g., "USDC", "BTC")
+- **Issuer**: Stellar account that issued the asset (public key)
+- **Native**: XLM (Stellar's native asset) has no issuer
+
+## Asset code validation
+
+PayOnProof validates asset codes using regex patterns:
+
+```typescript services/api/lib/stellar/anchor-directory.ts
+function normalizeCurrencyCode(value: string): string {
+  const code = value.trim().toUpperCase();
+  return /^[A-Z0-9]{2,12}$/.test(code) ? code : "";
+}
+```
+
+Valid asset codes:
+- Minimum 2 characters
+- Maximum 12 characters
+- Alphanumeric only (A-Z, 0-9)
+- Case-insensitive (normalized to uppercase)
+
+<Note>
+The validation pattern `^[A-Z0-9]{2,12}$` ensures compliance with Stellar's asset code requirements.
+</Note>
+
+## Asset discovery from Horizon
+
+PayOnProof discovers assets by querying the Horizon API:
+
+```typescript services/api/lib/stellar/horizon.ts
+interface HorizonAssetRecord {
+  asset_type: string;
+  asset_code?: string;
+  asset_issuer?: string;
+}
+
+async function getAssetIssuersFromHorizon(input: {
+  horizonUrl: string;
+  assetPages: number;
+  assetsPerPage: number;
+  timeoutMs: number;
+}): Promise<Set<string>> {
+  const issuers = new Set<string>();
+  let nextUrl =
+    `${normalizeBaseUrl(input.horizonUrl)}/assets?limit=${input.assetsPerPage}&order=desc`;
+  
+  for (let page = 0; page < input.assetPages; page += 1) {
+    const payload = await fetchJsonWithTimeout(nextUrl, input.timeoutMs);
+    const records = payload?._embedded?.records ?? [];
+    
+    for (const record of records) {
+      if (record.asset_type === "native") continue;
+      if (record.asset_issuer) issuers.add(record.asset_issuer);
+    }
+    
+    const href = payload?._links?.next?.href;
+    if (!href) break;
+    nextUrl = href;
+  }
+  
+  return issuers;
+}
+```
+
+<Info>
+See implementation at `services/api/lib/stellar/horizon.ts:206`
+</Info>
+
+### Asset types
+
+Horizon returns three asset types:
+
+- **native**: The native XLM asset
+- **credit_alphanum4**: 1-4 character asset codes
+- **credit_alphanum12**: 5-12 character asset codes
+
+PayOnProof filters out native assets when discovering issuers.
+
+## Asset fee extraction
+
+Fee information is extracted from anchor info endpoints:
+
+```typescript services/api/lib/stellar/capabilities.ts
+function extractFeeFromInfo(
+  info: unknown,
+  assetCode: string
+): { fixed?: number; percent?: number } | undefined {
+  if (!info || typeof info !== "object") return undefined;
+  const root = info as Record<string, unknown>;
+  const deposit = root.deposit as Record<string, unknown> | undefined;
+  const withdraw = root.withdraw as Record<string, unknown> | undefined;
+  
+  const candidates = [
+    deposit?.[assetCode],
+    withdraw?.[assetCode],
+    deposit?.[`${assetCode}:*`],
+    withdraw?.[`${assetCode}:*`],
+  ];
+  
+  const found = candidates.find((v) => v && typeof v === "object") as
+    | Record<string, unknown>
+    | undefined;
+    
+  if (!found) return undefined;
+  
+  return {
+    fixed: toNumber(found.fee_fixed),
+    percent: toNumber(found.fee_percent),
+  };
+}
+```
+
+<Tip>
+Anchors can specify fees for specific assets or use wildcard patterns like `USDC:*` to apply fees across all issuers of that asset code.
+</Tip>
+
+## Asset code parsing
+
+When processing anchor responses, asset codes are extracted from composite strings:
+
+```typescript services/api/lib/stellar/horizon.ts
+for (const code of Object.keys(deposit ?? {})) {
+  const assetCode = code.split(":")[0]?.trim().toUpperCase();
+  if (assetCode && /^[A-Z0-9]{2,12}$/.test(assetCode)) {
+    rows.push({
+      type: "on-ramp",
+      currency: assetCode,
+      countries: extractCountryCodesFromAssetConfig(deposit[code]),
+    });
+  }
+}
+```
+
+This handles formats like:
+- `USDC` - Simple asset code
+- `USDC:GABC...` - Asset with issuer
+- `USDC:*` - Wildcard issuer
+
+## Number conversion utilities
+
+Asset amounts and fees are normalized using safe conversion:
+
+```typescript
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+```
+
+This ensures:
+- Handles both number and string inputs
+- Rejects `NaN`, `Infinity`, and `-Infinity`
+- Returns `undefined` for invalid values
+
+## Asset catalog integration
+
+Discovered assets are included in the anchor catalog:
+
+```typescript
+export interface AnchorCatalogImportRow {
+  id: string;
+  name: string;
+  domain: string;
+  country: string;
+  currency: string; // Asset code
+  type: "on-ramp" | "off-ramp";
+  active: boolean;
+}
+```
+
+Each row represents an anchor's support for a specific asset in a specific country.
+
+## Asset in capability resolution
+
+Asset codes are central to capability resolution:
+
+```typescript services/api/lib/stellar/capabilities.ts
+export async function resolveAnchorCapabilities(input: {
+  domain: string;
+  assetCode: string; // Asset to query
+}): Promise<ResolvedAnchorCapabilities> {
+  const sep1 = await discoverAnchorFromDomain({ domain: input.domain });
+  
+  let fees: { fixed?: number; percent?: number; source: "sep24" | "sep6" | "default" } = {
+    source: "default",
+  };
+  
+  if (sep1.transferServerSep24) {
+    const r = await fetchSep24Info({ transferServerSep24: sep1.transferServerSep24 });
+    sep24Info = r.info;
+    const extracted = extractFeeFromInfo(r.info, input.assetCode);
+    if (extracted?.fixed !== undefined || extracted?.percent !== undefined) {
+      fees = { ...extracted, source: "sep24" };
+    }
+  }
+  
+  return { domain: sep1.domain, sep, endpoints, fees, diagnostics };
+}
+```
+
+<Note>
+Capability resolution queries fees for a specific asset code, as different assets may have different fee structures.
+</Note>
+
+## Home domain for assets
+
+Asset issuers set home domains on their accounts:
+
+```typescript services/api/lib/stellar/horizon.ts
+interface HorizonAccountRecord {
+  id: string;
+  home_domain?: string;
+}
+
+async function getHomeDomainForIssuer(input: {
+  horizonUrl: string;
+  issuer: string;
+  timeoutMs: number;
+}): Promise<string | undefined> {
+  const url = `${normalizeBaseUrl(input.horizonUrl)}/accounts/${input.issuer}`;
+  const payload = await fetchJsonWithTimeout(url, input.timeoutMs) as HorizonAccountRecord;
+  const homeDomain = payload.home_domain?.trim().toLowerCase();
+  return homeDomain || undefined;
+}
+```
+
+The home domain links an asset issuer to their anchor services.
+
+## ID generation
+
+Unique IDs are generated for asset-country-anchor combinations:
+
+```typescript
+function toId(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+const id = toId(
+  `anchor-${domain}-${countryCode}-${currency}-${type}`
+);
+```
+
+Example: `anchor-example-com-us-usdc-on-ramp`
+
+## Asset name extraction
+
+Anchor names are extracted from info responses:
+
+```typescript
+function pickAnchorName(domain: string, info: unknown): string {
+  if (info && typeof info === "object") {
+    const root = info as Record<string, unknown>;
+    const orgName = root.org_name;
+    const name = root.name;
+    if (typeof orgName === "string" && orgName.trim()) return orgName.trim();
+    if (typeof name === "string" && name.trim()) return name.trim();
+  }
+  return domain;
+}
+```
+
+This provides user-friendly names for anchors supporting the asset.
+
+## Asset configuration fields
+
+Anchors provide asset-specific configuration:
+
+```json
+{
+  "deposit": {
+    "USDC": {
+      "enabled": true,
+      "fee_fixed": 0.1,
+      "fee_percent": 0.5,
+      "min_amount": 10,
+      "max_amount": 50000,
+      "fields": {
+        "email_address": {
+          "description": "Email for notifications",
+          "optional": true
+        }
+      }
+    }
+  }
+}
+```
+
+PayOnProof extracts fee, limit, and field information from these configurations.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Horizon integration" icon="database" href="/stellar/horizon-integration">
+    Query assets from the network
+  </Card>
+  <Card title="Capability resolution" icon="puzzle-piece" href="/stellar/sep-overview#capability-resolution">
+    Discover asset support
+  </Card>
+  <Card title="SEP-24 flows" icon="browser" href="/stellar/sep24">
+    Asset deposit and withdrawal
+  </Card>
+  <Card title="Anchor discovery" icon="compass" href="/stellar/sep-overview#sep-1-stellar-toml">
+    Find anchors for assets
+  </Card>
+</CardGroup>

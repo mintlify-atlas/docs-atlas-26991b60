@@ -1,0 +1,176 @@
+---
+title: Stellar SEP standards overview
+description: Understanding how PayOnProof implements Stellar Ecosystem Proposals for anchor interoperability
+---
+
+PayOnProof implements multiple Stellar Ecosystem Proposals (SEPs) to enable seamless integration with anchors and payment providers on the Stellar network. These standards ensure interoperability and consistent user experiences across the ecosystem.
+
+## Implemented SEP standards
+
+PayOnProof supports the following SEP standards:
+
+<CardGroup cols={2}>
+  <Card title="SEP-1" icon="file-code" href="#sep-1-stellar-toml">
+    Anchor discovery via stellar.toml files
+  </Card>
+  <Card title="SEP-10" icon="shield-check" href="/stellar/sep10">
+    Authentication using challenge transactions
+  </Card>
+  <Card title="SEP-24" icon="browser" href="/stellar/sep24">
+    Hosted deposit and withdrawal flows
+  </Card>
+  <Card title="SEP-6" icon="exchange" href="#sep-6-programmatic-transfers">
+    Programmatic deposit and withdrawal
+  </Card>
+</CardGroup>
+
+## SEP-1: Stellar TOML
+
+SEP-1 defines how anchors publish their service information through a `stellar.toml` file hosted at `/.well-known/stellar.toml`. PayOnProof automatically discovers anchor capabilities by fetching and parsing these files.
+
+### Discovery process
+
+The platform uses the `discoverAnchorFromDomain` function to retrieve anchor information:
+
+```typescript services/api/lib/stellar/sep1.ts
+export async function discoverAnchorFromDomain(
+  input: Sep1DiscoveryInput
+): Promise<Sep1DiscoveryResult> {
+  const domain = normalizeDomain(input.domain);
+  const stellarTomlUrl = `https://${domain}/.well-known/stellar.toml`;
+  
+  const response = await fetchWithTimeout(
+    stellarTomlUrl,
+    input.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  );
+  
+  const text = await response.text();
+  const parsed = parseTomlFlat(text);
+  
+  return {
+    domain,
+    stellarTomlUrl,
+    signingKey: parsed.SIGNING_KEY,
+    webAuthEndpoint: parsed.WEB_AUTH_ENDPOINT,
+    transferServerSep24: parsed.TRANSFER_SERVER_SEP0024,
+    transferServerSep6: parsed.TRANSFER_SERVER,
+    directPaymentServer: parsed.DIRECT_PAYMENT_SERVER,
+    kycServer: parsed.KYC_SERVER,
+    raw: parsed,
+  };
+}
+```
+
+<Info>
+See the full implementation in `services/api/lib/stellar/sep1.ts:70`
+</Info>
+
+### Extracted information
+
+From the stellar.toml file, PayOnProof extracts:
+
+- **SIGNING_KEY**: The anchor's public key for transaction verification
+- **WEB_AUTH_ENDPOINT**: SEP-10 authentication endpoint
+- **TRANSFER_SERVER_SEP0024**: SEP-24 hosted flow endpoint
+- **TRANSFER_SERVER**: SEP-6 programmatic transfer endpoint
+- **DIRECT_PAYMENT_SERVER**: SEP-31 direct payment endpoint
+- **KYC_SERVER**: KYC verification endpoint
+
+## SEP-6: Programmatic transfers
+
+SEP-6 enables programmatic deposits and withdrawals without requiring interactive web flows. PayOnProof fetches SEP-6 capabilities to understand supported assets and fee structures.
+
+```typescript services/api/lib/stellar/sep6.ts
+export async function fetchSep6Info(input: Sep6InfoInput): Promise<{
+  infoUrl: string;
+  transferServerSep6: string;
+  domain?: string;
+  info: unknown;
+}> {
+  let transferServer = input.transferServerSep6?.trim();
+  let domain = input.domain?.trim();
+  
+  if (!transferServer) {
+    const discovered = await discoverAnchorFromDomain({ domain });
+    transferServer = discovered.transferServerSep6;
+    domain = discovered.domain;
+  }
+  
+  const transferServerSep6 = normalizeBaseUrl(transferServer);
+  const infoUrl = `${transferServerSep6}/info`;
+  const response = await fetchWithTimeout(infoUrl, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  
+  const info = await response.json();
+  return { infoUrl, transferServerSep6, domain, info };
+}
+```
+
+## Capability resolution
+
+PayOnProof automatically resolves which SEP standards an anchor supports and extracts fee information:
+
+```typescript services/api/lib/stellar/capabilities.ts
+export async function resolveAnchorCapabilities(input: {
+  domain: string;
+  assetCode: string;
+}): Promise<ResolvedAnchorCapabilities> {
+  const sep1 = await discoverAnchorFromDomain({ domain: input.domain });
+  
+  const sep = {
+    sep24: Boolean(sep1.transferServerSep24),
+    sep6: Boolean(sep1.transferServerSep6),
+    sep31: Boolean(sep1.directPaymentServer),
+    sep10: Boolean(sep1.webAuthEndpoint),
+  };
+  
+  // Fetch fee information from SEP-24 and SEP-6 info endpoints
+  // ...
+  
+  return { domain: sep1.domain, sep, endpoints, fees, diagnostics };
+}
+```
+
+<Tip>
+The capability resolver attempts to fetch fee information from both SEP-24 and SEP-6 endpoints, preferring SEP-24 when available.
+</Tip>
+
+## Anchor trust evaluation
+
+PayOnProof implements security checks to evaluate anchor trustworthiness:
+
+```typescript services/api/lib/stellar/trust.ts
+export function evaluateAnchorTrust(input: AnchorTrustInput): AnchorTrustResult {
+  const reasons: string[] = [];
+  
+  if (!c.sep.sep24 && !c.sep.sep6 && !c.sep.sep31) {
+    reasons.push("Anchor missing transfer protocol capability (SEP-24/6/31)");
+  }
+  
+  if (requireSep10 && !c.sep.sep10) {
+    reasons.push("Missing SEP-10 (WEB_AUTH_ENDPOINT)");
+  }
+  
+  if (c.sep.sep24 && !isHttpsUrl(c.endpoints.transferServerSep24)) {
+    reasons.push("Invalid TRANSFER_SERVER_SEP0024 (must be HTTPS)");
+  }
+  
+  return { trusted: reasons.length === 0, reasons };
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SEP-10 authentication" icon="key" href="/stellar/sep10">
+    Learn how PayOnProof authenticates with anchors
+  </Card>
+  <Card title="SEP-24 flows" icon="window" href="/stellar/sep24">
+    Understand hosted deposit and withdrawal
+  </Card>
+  <Card title="Horizon integration" icon="database" href="/stellar/horizon-integration">
+    Discover how we query the Stellar network
+  </Card>
+  <Card title="Asset management" icon="coins" href="/stellar/asset-management">
+    Learn about asset discovery and handling
+  </Card>
+</CardGroup>

@@ -1,0 +1,471 @@
+---
+title: Anchor catalog sync
+description: Configure automatic synchronization of Stellar anchor capabilities
+---
+
+PayOnProof maintains a catalog of Stellar anchors that support cross-border payments. This guide explains how to synchronize and maintain this catalog.
+
+## Overview
+
+The anchor catalog sync process:
+
+1. Discovers Stellar anchors from various sources
+2. Validates anchor capabilities via stellar.toml (SEP-1)
+3. Updates the database with SEP support (SEP-6, SEP-10, SEP-24, SEP-31)
+4. Marks anchors as operational or inactive based on health checks
+5. Runs automatically on a schedule via Vercel cron jobs
+
+## Discovery modes
+
+PayOnProof supports multiple anchor discovery modes:
+
+### Directory mode (default)
+
+Uses a curated JSON export of anchors from a directory service.
+
+```bash .env
+ANCHOR_DISCOVERY_MODE=directory
+STELLAR_ANCHOR_DIRECTORY_URL=https://raw.githubusercontent.com/your-org/payonproof/main/services/api/data/anchors-export.json
+```
+
+### Horizon mode (recommended for production)
+
+Discoverers issuers and home domains directly from the Stellar Horizon API.
+
+```bash .env
+ANCHOR_DISCOVERY_MODE=horizon
+ANCHOR_ENABLE_HORIZON_FALLBACK=true
+```
+
+<Note>
+  Horizon mode is more reliable as it discovers anchors directly from the blockchain, but may take longer to complete.
+</Note>
+
+## Automatic sync with Vercel cron
+
+The API service includes a Vercel cron job that runs anchor synchronization automatically.
+
+### Cron configuration
+
+**File:** `services/api/vercel.json`
+
+```json
+{
+  "crons": [
+    {
+      "path": "/api/anchors/ops",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}
+```
+
+This runs daily at midnight UTC. Modify the schedule using cron syntax:
+
+- `0 0 * * *` - Daily at midnight
+- `0 */6 * * *` - Every 6 hours
+- `*/15 * * * *` - Every 15 minutes
+
+### Cron endpoint
+
+**Endpoint:** `GET /api/anchors/ops`
+
+**Query parameters:**
+
+- `secret` - Cron secret for authentication (optional but recommended)
+- `sourceUrl` - Override anchor directory URL
+- `refreshLimit` - Max number of anchors to refresh (default: 300)
+- `directoryHome` - Custom directory home URL
+- `mode` - Force discovery mode (`horizon` or `directory`)
+- `issuerLimit` - Max issuers to check in horizon mode (default: 300)
+- `assetPages` - Number of asset pages to scan (default: 5)
+- `horizonUrl` - Override Horizon network URL
+
+### Testing the cron endpoint locally
+
+<CodeGroup>
+```bash Basic test
+curl "http://localhost:3001/api/anchors/ops"
+```
+
+```bash With secret
+curl "http://localhost:3001/api/anchors/ops?secret=YOUR_SECRET"
+```
+
+```bash Custom source URL
+curl "http://localhost:3001/api/anchors/ops?secret=YOUR_SECRET&sourceUrl=https://your-export.json&refreshLimit=200"
+```
+
+```bash Horizon mode
+curl "http://localhost:3001/api/anchors/ops?secret=YOUR_SECRET&mode=horizon&issuerLimit=300&assetPages=5"
+```
+
+```bash Custom Horizon network
+curl "http://localhost:3001/api/anchors/ops?secret=YOUR_SECRET&mode=horizon&horizonUrl=https://horizon.stellar.org&issuerLimit=600"
+```
+</CodeGroup>
+
+### Protecting the cron endpoint
+
+Set a `CRON_SECRET` environment variable:
+
+```bash .env
+CRON_SECRET=your_long_random_secret_32_chars_min
+```
+
+The endpoint will require `?secret=YOUR_SECRET` query parameter.
+
+<Warning>
+  Without a `CRON_SECRET`, the cron endpoint is publicly accessible. Always set this in production.
+</Warning>
+
+## Manual sync scripts
+
+For development or one-time imports, use the provided npm scripts.
+
+### Auto sync
+
+Automatically discovers and syncs anchors:
+
+<CodeGroup>
+```bash Dry run
+cd services/api
+npm run anchors:auto:sync
+```
+
+```bash Apply changes
+npm run anchors:auto:sync -- --apply
+```
+
+```bash Custom options
+npm run anchors:auto:sync -- --apply --refresh-limit 500 --api http://localhost:3001
+```
+</CodeGroup>
+
+### Import from file
+
+Import anchors from a local JSON/CSV file:
+
+<CodeGroup>
+```bash Dry run
+npm run anchors:import:file -- --file ./anchors-export.json
+```
+
+```bash Apply changes
+npm run anchors:import:file -- --file ./anchors-export.json --apply
+```
+</CodeGroup>
+
+### Bootstrap anchors
+
+Fully automatic bootstrap (import + SEP refresh):
+
+<CodeGroup>
+```bash From URL
+npm run anchors:bootstrap -- --download-url "https://your-source.json"
+```
+
+```bash From file
+npm run anchors:bootstrap -- --file ./anchors-export.json
+```
+</CodeGroup>
+
+### Seed import
+
+Import from a curated seed file with anchor definitions:
+
+<CodeGroup>
+```bash Dry run
+npm run anchors:seed:import -- --file ./scripts/anchor-seeds.json
+```
+
+```bash Apply with refresh
+npm run anchors:seed:import -- --file ./scripts/anchor-seeds.json --apply
+```
+
+```bash POP production seeds
+npm run anchors:seed:import:pop
+```
+</CodeGroup>
+
+**Seed file format:**
+
+```json anchor-seeds.json
+[
+  {
+    "name": "MoneyGram",
+    "domain": "stellar.moneygram.com",
+    "country": "US",
+    "currency": "USD",
+    "type": "on-ramp"
+  },
+  {
+    "name": "Bitso",
+    "domain": "bitso.com",
+    "country": "MX",
+    "currency": "MXN",
+    "type": "off-ramp"
+  }
+]
+```
+
+## GitHub Actions for automated exports
+
+PayOnProof includes a GitHub Actions workflow for automated anchor directory exports.
+
+**File:** `.github/workflows/anchors-directory-export.yml`
+
+```yaml
+name: Anchors Directory Export
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Every 30 minutes
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright xlsx
+          npx playwright install chromium
+      
+      - name: Generate anchors export
+        run: |
+          node services/api/scripts/export-anchors-from-directory.mjs \
+            --home-url "https://anchors.stellar.org/" \
+            --out "services/api/data/anchors-export.json" \
+            --domain-concurrency 12 \
+            --min-rows 20 \
+            --strict-directory
+      
+      - name: Commit and push if changed
+        run: |
+          git add services/api/data/anchors-export.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update anchor directory export"
+          git push
+```
+
+This workflow:
+
+1. Runs every 30 minutes (or on manual trigger)
+2. Uses Playwright to scrape the Stellar anchor directory
+3. Generates `services/api/data/anchors-export.json`
+4. Commits changes if the export file changed
+
+**Configure environment variable:**
+
+```bash .env
+STELLAR_ANCHOR_DIRECTORY_URL=https://raw.githubusercontent.com/your-org/payonproof/main/services/api/data/anchors-export.json
+```
+
+## Runtime API endpoints
+
+Use these endpoints to manage the catalog in production:
+
+### List supported countries
+
+```bash
+GET /api/anchors/countries
+```
+
+Returns countries currently supported by active anchors.
+
+### Query catalog
+
+```bash
+GET /api/anchors/catalog?country=US&type=on-ramp&operationalOnly=true
+```
+
+**Query parameters:**
+
+- `country` - Filter by country code
+- `type` - Filter by type (`on-ramp` or `off-ramp`)
+- `operationalOnly` - Only return operational anchors
+
+### Refresh capabilities
+
+```bash
+POST /api/anchors/capabilities/refresh
+```
+
+**Request body (optional):**
+
+```json
+{
+  "country": "US",
+  "limit": 100
+}
+```
+
+Manually triggers capability refresh for anchors.
+
+## Anchor health checks
+
+### SEP-1 validation (stellar.toml)
+
+The sync process validates each anchor's `stellar.toml` file:
+
+- Checks for HTTP 200 response
+- Validates TOML format
+- Extracts SEP endpoints
+- Marks anchors with 404 errors as inactive after threshold
+
+**Auto-disable threshold:**
+
+```bash .env
+ANCHOR_SEP1_404_DISABLE_THRESHOLD=3
+```
+
+Anchors with 3+ consecutive 404 errors on `stellar.toml` are automatically disabled.
+
+### Operational status
+
+An anchor is marked as operational if:
+
+- `stellar.toml` is accessible (SEP-1)
+- At least one SEP endpoint is configured (SEP-6, SEP-24, or SEP-31)
+- Recent capability check succeeded
+
+## Trust and validation settings
+
+Configure anchor trust requirements:
+
+```bash .env
+ANCHOR_TRUST_REQUIRE_SEP10=false
+ANCHOR_TRUST_REQUIRE_SIGNING_KEY=false
+ANCHOR_TRUST_REQUIRE_SEP24_OR_SEP31=false
+```
+
+- `ANCHOR_TRUST_REQUIRE_SEP10` - Require SEP-10 web authentication
+- `ANCHOR_TRUST_REQUIRE_SIGNING_KEY` - Require valid signing key in stellar.toml
+- `ANCHOR_TRUST_REQUIRE_SEP24_OR_SEP31` - Require hosted or direct payment support
+
+## Monitoring sync operations
+
+### Vercel function logs
+
+1. Go to Vercel Dashboard → Your API Project
+2. Click **Deployments** → Select a deployment
+3. Click **Functions** → Find `/api/anchors/ops`
+4. View execution logs and errors
+
+### Database diagnostics
+
+The `anchors_catalog` table includes a `diagnostics` JSONB column:
+
+```sql
+select id, name, operational, diagnostics
+from public.anchors_catalog
+where not operational;
+```
+
+Diagnostics include:
+- SEP endpoint discovery results
+- HTTP error codes
+- Validation failures
+
+### Last check timestamp
+
+```sql
+select id, name, last_checked_at, operational
+from public.anchors_catalog
+order by last_checked_at desc;
+```
+
+## Production recommendations
+
+<Steps>
+  <Step title="Set discovery mode">
+    Use `horizon` mode with fallback:
+    
+    ```bash
+    ANCHOR_DISCOVERY_MODE=horizon
+    ANCHOR_ENABLE_HORIZON_FALLBACK=true
+    ```
+  </Step>
+
+  <Step title="Configure cron schedule">
+    Set an appropriate schedule in `vercel.json`:
+    
+    ```json
+    "schedule": "0 */6 * * *"  // Every 6 hours
+    ```
+  </Step>
+
+  <Step title="Protect cron endpoint">
+    Set a strong `CRON_SECRET`:
+    
+    ```bash
+    CRON_SECRET=your_long_random_secret_32_chars_min
+    ```
+  </Step>
+
+  <Step title="Set up alerting">
+    Monitor cron job failures in Vercel dashboard or integrate with [monitoring tools](/deployment/monitoring).
+  </Step>
+
+  <Step title="Maintain fallback directory">
+    Keep `STELLAR_ANCHOR_DIRECTORY_URL` configured as a fallback:
+    
+    ```bash
+    STELLAR_ANCHOR_DIRECTORY_URL=https://raw.githubusercontent.com/your-org/payonproof/main/services/api/data/anchors-export.json
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### No routes found
+
+If `/api/compare-routes` returns empty:
+
+1. Check if anchors exist for the corridor:
+   ```bash
+   curl "http://localhost:3001/api/anchors/catalog?country=US&type=on-ramp"
+   ```
+
+2. Verify anchors are marked as operational:
+   ```sql
+   select * from anchors_catalog where country = 'US' and operational = true;
+   ```
+
+3. Manually refresh capabilities:
+   ```bash
+   curl -X POST "http://localhost:3001/api/anchors/capabilities/refresh"
+   ```
+
+### Sync timeouts
+
+If horizon mode times out:
+
+- Reduce `issuerLimit` and `assetPages`
+- Use `directory` mode instead
+- Upgrade Vercel plan for longer function timeouts
+
+### Invalid stellar.toml
+
+If anchors fail validation:
+
+- Check `diagnostics` field in database
+- Verify anchor domain is accessible
+- Test manually: `curl https://anchor.example.com/.well-known/stellar.toml`
+
+## Next steps
+
+- [Set up monitoring](/deployment/monitoring)
+- [Deploy to Vercel](/deployment/vercel-deployment)
+- [Configure environment variables](/deployment/environment-variables)

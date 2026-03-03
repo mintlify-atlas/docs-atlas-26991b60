@@ -1,0 +1,207 @@
+---
+title: SEP-31 direct payments
+description: Cross-border payments and remittances using the Stellar network
+---
+
+SEP-31 defines a standard for direct cross-border payments and remittances. This protocol enables sending institutions to initiate payments on behalf of users through receiving anchors.
+
+## Overview
+
+While PayOnProof's source code doesn't include a dedicated SEP-31 implementation file, the platform detects SEP-31 support through anchor discovery and includes it in capability resolution.
+
+### Use cases
+
+- **Remittances**: Send money across borders to recipients
+- **B2B payments**: Business-to-business transactions
+- **Programmatic transfers**: API-driven payment flows
+- **Cross-border settlement**: International payment settlement
+
+## SEP-31 detection
+
+PayOnProof discovers SEP-31 support through the `DIRECT_PAYMENT_SERVER` field in stellar.toml:
+
+```typescript services/api/lib/stellar/sep1.ts
+export async function discoverAnchorFromDomain(
+  input: Sep1DiscoveryInput
+): Promise<Sep1DiscoveryResult> {
+  // Fetch stellar.toml
+  const text = await response.text();
+  const parsed = parseTomlFlat(text);
+  
+  return {
+    domain,
+    stellarTomlUrl,
+    signingKey: parsed.SIGNING_KEY,
+    webAuthEndpoint: parsed.WEB_AUTH_ENDPOINT,
+    transferServerSep24: parsed.TRANSFER_SERVER_SEP0024,
+    transferServerSep6: parsed.TRANSFER_SERVER,
+    directPaymentServer: parsed.DIRECT_PAYMENT_SERVER, // SEP-31
+    kycServer: parsed.KYC_SERVER,
+    raw: parsed,
+  };
+}
+```
+
+<Info>
+See the SEP-1 discovery implementation at `services/api/lib/stellar/sep1.ts:70`
+</Info>
+
+## Capability resolution
+
+SEP-31 capabilities are included in the anchor capability resolution:
+
+```typescript services/api/lib/stellar/capabilities.ts
+export async function resolveAnchorCapabilities(input: {
+  domain: string;
+  assetCode: string;
+}): Promise<ResolvedAnchorCapabilities> {
+  const sep1 = await discoverAnchorFromDomain({ domain: input.domain });
+  
+  const sep = {
+    sep24: Boolean(sep1.transferServerSep24),
+    sep6: Boolean(sep1.transferServerSep6),
+    sep31: Boolean(sep1.directPaymentServer), // SEP-31 support flag
+    sep10: Boolean(sep1.webAuthEndpoint),
+  };
+  
+  return {
+    domain: sep1.domain,
+    sep,
+    endpoints: {
+      webAuthEndpoint: sep1.webAuthEndpoint,
+      transferServerSep24: sep1.transferServerSep24,
+      transferServerSep6: sep1.transferServerSep6,
+      directPaymentServer: sep1.directPaymentServer, // SEP-31 endpoint
+      kycServer: sep1.kycServer,
+    },
+    fees,
+    diagnostics,
+    raw: { signingKey: sep1.signingKey, sep24Info, sep6Info },
+  };
+}
+```
+
+<Note>
+The resolved capabilities object includes the `directPaymentServer` endpoint URL when the anchor supports SEP-31.
+</Note>
+
+## Trust evaluation
+
+When evaluating anchor trustworthiness, PayOnProof checks for at least one transfer protocol:
+
+```typescript services/api/lib/stellar/trust.ts
+export function evaluateAnchorTrust(input: AnchorTrustInput): AnchorTrustResult {
+  const reasons: string[] = [];
+  
+  if (!c.sep.sep24 && !c.sep.sep6 && !c.sep.sep31) {
+    reasons.push("Anchor missing transfer protocol capability (SEP-24/6/31)");
+  }
+  
+  if (requireSep24OrSep31 && !c.sep.sep24 && !c.sep.sep31) {
+    reasons.push("Anchor missing SEP-24/SEP-31 (SEP-6 only is not allowed)");
+  }
+  
+  if (c.sep.sep31 && !isHttpsUrl(c.endpoints.directPaymentServer)) {
+    reasons.push("Invalid DIRECT_PAYMENT_SERVER (must be HTTPS)");
+  }
+  
+  return { trusted: reasons.length === 0, reasons };
+}
+```
+
+<Tip>
+PayOnProof requires anchors to support at least SEP-24 or SEP-31. SEP-6-only anchors may be rejected depending on configuration.
+</Tip>
+
+## Security requirements
+
+For SEP-31 endpoints to be considered trusted:
+
+1. **HTTPS required**: The `DIRECT_PAYMENT_SERVER` must use HTTPS
+2. **SEP-10 authentication**: SEP-31 flows require SEP-10 auth tokens
+3. **Signing key**: The anchor must provide a `SIGNING_KEY` in stellar.toml
+
+### HTTPS validation
+
+```typescript services/api/lib/stellar/trust.ts
+function isHttpsUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+```
+
+## SEP-31 in anchor directory
+
+When discovering anchors from Horizon, PayOnProof checks for SEP-31 support:
+
+```typescript services/api/lib/stellar/horizon.ts
+const sep1 = await discoverAnchorFromDomain({ domain, timeoutMs });
+
+// Check for SEP-31 capability
+let sep24Info: unknown;
+let sep6Info: unknown;
+
+if (sep1.transferServerSep24) {
+  try {
+    sep24Info = (await fetchSep24Info({ ... })).info;
+  } catch { }
+}
+
+if (sep1.transferServerSep6) {
+  try {
+    sep6Info = (await fetchSep6Info({ ... })).info;
+  } catch { }
+}
+
+// Extract supported operations from all protocols
+const extracted = [
+  ...extractTypesAndCurrencies(sep24Info),
+  ...extractTypesAndCurrencies(sep6Info),
+];
+```
+
+<Note>
+While SEP-31 is detected and included in capabilities, the current implementation focuses on SEP-24 and SEP-6 for extracting supported currencies and fee information.
+</Note>
+
+## Diagnostic information
+
+The capability resolver provides diagnostics when SEP-31 is missing:
+
+```typescript services/api/lib/stellar/capabilities.ts
+if (!sep.sep31) {
+  diagnostics.push("SEP-31 endpoint missing in stellar.toml");
+}
+```
+
+These diagnostics help identify which protocols an anchor supports and potential configuration issues.
+
+## Related standards
+
+SEP-31 works in conjunction with other Stellar standards:
+
+- **SEP-10**: Required for authentication before initiating payments
+- **SEP-12**: KYC information collection for sender and receiver
+- **SEP-38**: Quote negotiation for cross-asset payments
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SEP-10 authentication" icon="key" href="/stellar/sep10">
+    Authentication required for SEP-31 flows
+  </Card>
+  <Card title="SEP-24 flows" icon="browser" href="/stellar/sep24">
+    Alternative hosted deposit/withdrawal
+  </Card>
+  <Card title="Anchor trust" icon="shield-check" href="/stellar/sep-overview#anchor-trust-evaluation">
+    Security validation for anchors
+  </Card>
+  <Card title="Capability resolution" icon="puzzle-piece" href="/stellar/sep-overview#capability-resolution">
+    How capabilities are determined
+  </Card>
+</CardGroup>

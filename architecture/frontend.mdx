@@ -1,0 +1,464 @@
+---
+title: Frontend architecture
+description: Next.js application structure, components, and frontend patterns in PayOnProof
+---
+
+The PayOnProof frontend is a **Next.js 16 App Router application** that provides a clean, performant UI for comparing remittance routes and executing cross-border transfers.
+
+## Directory structure
+
+```text
+services/web/
+  app/                      # Next.js App Router pages
+    layout.tsx              # Root layout with providers
+    page.tsx                # Landing page
+    send/
+      page.tsx              # Main app: compare routes & execute
+  components/               # React components
+    ui/                     # shadcn/ui primitives
+    pop-header.tsx          # App header
+    remittance-form.tsx     # Search form
+    route-card.tsx          # Route comparison card
+    transaction-execution.tsx
+    proof-of-payment.tsx
+  lib/                      # Frontend utilities
+    api.ts                  # API base URL configuration
+    anchors-api.ts          # Backend API client
+    types.ts                # Shared TypeScript types
+    wallet-context.tsx      # Stellar wallet provider
+  hooks/                    # React hooks
+    use-toast.ts
+  public/                   # Static assets
+    isotipo.png
+```
+
+## App Router pages
+
+### Landing page (`app/page.tsx`)
+
+Public marketing page with:
+- Hero section explaining PayOnProof
+- Feature highlights
+- CTA to `/send`
+
+### Send page (`app/send/page.tsx`)
+
+Main application with a **4-step flow**:
+
+```typescript
+type AppStep = "search" | "routes" | "execute" | "proof";
+```
+
+#### Step 1: Search
+
+```tsx
+<RemittanceForm
+  countries={countries}
+  onSearch={handleSearch}
+  loading={loading}
+/>
+```
+
+User inputs:
+- Origin country
+- Destination country
+- Amount to send
+
+#### Step 2: Routes
+
+```tsx
+{sortedRoutes.map((route) => (
+  <RouteCard
+    key={route.id}
+    route={route}
+    onSelect={handleSelectRoute}
+    selectable={route.available && isMoneyGramRoute}
+  />
+))}
+```
+
+Displays:
+- All available routes sorted by recommendation, fee, or speed
+- Fee breakdown (on-ramp + bridge + off-ramp)
+- Estimated time
+- Exchange rate
+- Amount recipient receives
+
+<Note>
+Currently, only MoneyGram-to-MoneyGram routes are executable (MVP constraint).
+</Note>
+
+#### Step 3: Execute
+
+```tsx
+<TransactionExecution
+  route={selectedRoute}
+  amount={amount}
+  onBack={handleBackToRoutes}
+  onComplete={handleTransactionComplete}
+/>
+```
+
+Simulates:
+- SEP-24 interactive deposit flow
+- SEP-10 authentication
+- Stellar transaction submission
+- Anchor callback confirmation
+
+#### Step 4: Proof
+
+```tsx
+<ProofOfPaymentView
+  transaction={transaction}
+  onNewTransfer={handleNewTransfer}
+/>
+```
+
+Shows:
+- Transaction hash (Stellar)
+- Verification link to StellarExpert
+- Summary of transfer details
+- Shareable proof of payment
+
+## Component architecture
+
+### Component hierarchy
+
+```
+SendPage (client component)
+  └─ WalletProvider
+      ├─ PopHeader
+      ├─ GradientMesh (background)
+      └─ [Current Step]
+          ├─ RemittanceForm
+          ├─ RouteCard (multiple)
+          ├─ TransactionExecution
+          └─ ProofOfPaymentView
+```
+
+### Key components
+
+#### `RemittanceForm`
+
+Form with validation using `react-hook-form` and `zod`:
+
+```typescript
+interface RemittanceFormProps {
+  countries: AnchorCountry[];
+  onSearch: (origin: string, destination: string, amount: number) => void;
+  loading: boolean;
+}
+```
+
+**Features:**
+- Country dropdowns populated from `/api/anchors/countries`
+- Amount input with validation
+- Loading state during route comparison
+
+#### `RouteCard`
+
+Displays a single remittance route:
+
+```typescript
+interface RouteCardProps {
+  route: RemittanceRoute;
+  onSelect: (route: RemittanceRoute) => void;
+  selectable: boolean;
+  selectionHint?: string;
+  index: number;
+}
+```
+
+**Visual elements:**
+- Origin/destination anchor names
+- Fee percentage badge
+- Estimated time
+- "Recommended" indicator (⚡)
+- Escrow status
+- Select button (disabled if not selectable)
+
+#### `TransactionExecution`
+
+Multi-step execution flow:
+
+```typescript
+const steps = [
+  "Authenticating with anchor",      // SEP-10
+  "Initiating deposit flow",         // SEP-24
+  "Submitting to Stellar",           // Transaction
+  "Confirming with destination",     // SEP-24 callback
+  "Verifying on-chain",              // Horizon query
+];
+```
+
+Simulates execution with realistic delays and error handling.
+
+#### `ProofOfPaymentView`
+
+Final confirmation screen:
+
+```tsx
+<div className="proof-container">
+  <CheckCircle className="success-icon" />
+  <h1>Transfer complete</h1>
+  <p>Transaction hash: {transaction.stellarTxHash}</p>
+  <a href={stellarExpertUrl} target="_blank">View on StellarExpert</a>
+</div>
+```
+
+## API communication
+
+### API client (`lib/anchors-api.ts`)
+
+```typescript
+import { apiUrl } from "./api";
+
+export async function fetchAnchorCountries(): Promise<AnchorCountry[]> {
+  const response = await fetch(apiUrl("/api/anchors/countries"));
+  if (!response.ok) throw new Error("Failed to fetch countries");
+  return response.json();
+}
+
+export async function compareRoutes(input: {
+  origin: string;
+  destination: string;
+  amount: number;
+}): Promise<{ routes: RemittanceRoute[]; noRouteReason?: string }> {
+  const response = await fetch(apiUrl("/api/compare-routes"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error("Failed to compare routes");
+  return response.json();
+}
+```
+
+### Environment configuration
+
+```bash
+# services/web/.env.local
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+```
+
+Production:
+```bash
+NEXT_PUBLIC_API_BASE_URL=https://api.payonproof.com
+```
+
+<Info>
+The `NEXT_PUBLIC_` prefix makes the variable accessible in browser-side code.
+</Info>
+
+## State management
+
+### Local state with React hooks
+
+No global state management library is needed. The app uses:
+
+```typescript
+const [step, setStep] = useState<AppStep>("search");
+const [routes, setRoutes] = useState<RemittanceRoute[]>([]);
+const [selectedRoute, setSelectedRoute] = useState<RemittanceRoute | null>(null);
+const [transaction, setTransaction] = useState<Transaction | null>(null);
+```
+
+### Why no Redux/Zustand?
+
+- **Simple data flow**: Single-page app with linear progression
+- **Ephemeral state**: Route comparison results don't need persistence
+- **No cross-component communication**: Parent-child props are sufficient
+- **Performance**: React 19's automatic batching handles updates efficiently
+
+## Wallet integration
+
+### Freighter wallet context
+
+```typescript
+// lib/wallet-context.tsx
+export function WalletProvider({ children }: { children: React.ReactNode }) {
+  const [publicKey, setPublicKey] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+
+  const connect = async () => {
+    if (await isConnected()) {
+      const key = await getPublicKey();
+      setPublicKey(key);
+      setIsConnected(true);
+    }
+  };
+
+  return (
+    <WalletContext.Provider value={{ publicKey, isConnected, connect }}>
+      {children}
+    </WalletContext.Provider>
+  );
+}
+```
+
+Usage:
+```typescript
+const { publicKey, connect } = useWallet();
+```
+
+<Note>
+Freighter is a browser extension wallet for Stellar. Users must install it to interact with the blockchain.
+</Note>
+
+## Styling approach
+
+### Tailwind CSS + shadcn/ui
+
+```tsx
+<Button
+  variant="outline"
+  size="sm"
+  className="rounded-xl bg-transparent hover:bg-primary/10"
+>
+  Select route
+</Button>
+```
+
+**Design system:**
+- **Colors**: CSS variables defined in `styles/globals.css`
+- **Components**: Radix UI primitives with Tailwind styling
+- **Animations**: `tailwindcss-animate` plugin
+- **Responsive**: Mobile-first breakpoints
+
+### Dark mode support
+
+```typescript
+import { ThemeProvider } from "next-themes";
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          {children}
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+## Performance optimizations
+
+### Image optimization
+
+```tsx
+import Image from "next/image";
+
+<Image
+  src="/isotipo.png"
+  alt="POP"
+  width={72}
+  height={72}
+  priority  // Load immediately for hero image
+/>
+```
+
+Next.js automatically optimizes images with WebP conversion and lazy loading.
+
+### Font optimization
+
+```typescript
+import { Inter } from "next/font/google";
+
+const inter = Inter({ subsets: ["latin"] });
+```
+
+Fonts are self-hosted and preloaded for better performance.
+
+### Code splitting
+
+Next.js automatically splits code by route:
+- Landing page bundle: ~45 KB
+- Send page bundle: ~120 KB
+- Shared vendor chunk: ~180 KB
+
+## Type safety
+
+### Shared types
+
+```typescript
+// lib/types.ts
+export interface RemittanceRoute {
+  id: string;
+  originAnchor: {
+    id: string;
+    name: string;
+    country: string;
+    currency: string;
+    type: "on-ramp";
+  };
+  destinationAnchor: {
+    id: string;
+    name: string;
+    country: string;
+    currency: string;
+    type: "off-ramp";
+  };
+  feePercentage: number;
+  feeAmount: number;
+  estimatedTime: string;
+  exchangeRate: number;
+  receivedAmount: number;
+  available: boolean;
+  recommended: boolean;
+}
+```
+
+Types are manually kept in sync with backend response shapes. Future improvement: generate types from OpenAPI schema.
+
+## Error handling
+
+```typescript
+try {
+  const payload = await compareRoutes({ origin, destination, amount });
+  setRoutes(payload.routes ?? []);
+  setNoRouteReason(payload.noRouteReason ?? null);
+  setStep("routes");
+} catch (error) {
+  const message = error instanceof Error ? error.message : "Failed to fetch routes";
+  setRoutes([]);
+  setSearchError(message);
+} finally {
+  setLoading(false);
+}
+```
+
+**Error display:**
+```tsx
+{searchError && (
+  <p className="mt-2 text-xs text-destructive">{searchError}</p>
+)}
+```
+
+## Local development
+
+```bash
+cd services/web
+npm install
+npm run dev
+```
+
+Runs on `http://localhost:3000` by default.
+
+**Environment setup:**
+```bash
+cp .env.example .env.local
+# Edit NEXT_PUBLIC_API_BASE_URL to point to backend
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Backend architecture" icon="server" href="/architecture/backend">
+    Learn how the API processes route comparisons
+  </Card>
+  <Card title="Stellar integration" icon="link" href="/architecture/stellar-integration">
+    Understand blockchain interactions and anchor flows
+  </Card>
+</CardGroup>

@@ -1,0 +1,521 @@
+---
+title: Monitoring
+description: Monitor and observe PayOnProof services in production
+---
+
+This guide covers monitoring, logging, and observability for PayOnProof in production.
+
+## Vercel monitoring
+
+Vercel provides built-in monitoring for both services.
+
+### Function logs
+
+Access real-time and historical function logs:
+
+<Steps>
+  <Step title="Access project logs">
+    1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
+    2. Select your project (API or Web)
+    3. Click **Deployments**
+    4. Select a deployment
+    5. Click **Functions** tab
+  </Step>
+
+  <Step title="View function execution">
+    For each serverless function, you can see:
+    
+    - Execution count
+    - Error rate
+    - Average duration
+    - Memory usage
+    - Individual invocation logs
+  </Step>
+
+  <Step title="Filter and search logs">
+    Use the log viewer to:
+    
+    - Filter by time range
+    - Search for specific errors
+    - Filter by function path
+    - Download logs for analysis
+  </Step>
+</Steps>
+
+### Runtime logs
+
+Access runtime logs via Vercel CLI:
+
+```bash
+vercel logs [deployment-url]
+```
+
+**Examples:**
+
+```bash
+# API service logs
+vercel logs https://payonproof-api.vercel.app
+
+# Web service logs
+vercel logs https://payonproof-web.vercel.app
+
+# Follow logs in real-time
+vercel logs https://payonproof-api.vercel.app --follow
+```
+
+### Deployment status
+
+Monitor deployment health:
+
+1. **Build logs** - Check for compilation errors
+2. **Function builds** - Verify all functions compiled successfully
+3. **Deployment state** - Ensure deployment is READY
+
+## Application monitoring
+
+### Health check endpoints
+
+Implement health check endpoints for uptime monitoring:
+
+**API health check:**
+
+```typescript api/health.ts
+export default async function handler(req, res) {
+  const health = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    services: {
+      database: await checkDatabase(),
+      stellar: await checkStellar(),
+    }
+  };
+  
+  res.status(200).json(health);
+}
+```
+
+**Monitor health:**
+
+```bash
+curl https://api.yourdomain.com/api/health
+```
+
+### Key metrics to monitor
+
+#### API service metrics
+
+- **Response times** - Track P50, P95, P99 latencies
+- **Error rates** - Monitor 4xx and 5xx responses
+- **Function duration** - Watch for timeout risks
+- **Anchor sync status** - Track cron job success rate
+- **Database query performance** - Monitor slow queries
+
+#### Web service metrics
+
+- **Page load times** - Core Web Vitals (LCP, FID, CLS)
+- **API request failures** - Track frontend → backend errors
+- **User session errors** - JavaScript exceptions
+- **Conversion rates** - Payment completion rates
+
+### Database monitoring
+
+Monitor your Supabase database:
+
+<Steps>
+  <Step title="Access Supabase metrics">
+    1. Go to [Supabase Dashboard](https://app.supabase.com)
+    2. Select your project
+    3. Click **Database** → **Query Performance**
+  </Step>
+
+  <Step title="Key metrics to watch">
+    - **Active connections** - Ensure you're not hitting connection limits
+    - **Query performance** - Identify slow queries
+    - **Database size** - Track growth and plan for scaling
+    - **Table sizes** - Monitor `anchors_catalog` and `anchor_callback_events`
+  </Step>
+
+  <Step title="Enable slow query logging">
+    Configure slow query threshold:
+    
+    ```sql
+    ALTER SYSTEM SET log_min_duration_statement = '1000';  -- 1 second
+    SELECT pg_reload_conf();
+    ```
+  </Step>
+</Steps>
+
+### Anchor catalog health
+
+Monitor anchor catalog synchronization:
+
+**Check operational anchors:**
+
+```sql
+select 
+  country,
+  type,
+  count(*) as total,
+  count(*) filter (where operational) as operational,
+  count(*) filter (where active) as active
+from public.anchors_catalog
+group by country, type
+order by country, type;
+```
+
+**Check last sync timestamp:**
+
+```sql
+select 
+  max(last_checked_at) as last_sync,
+  now() - max(last_checked_at) as time_since_sync
+from public.anchors_catalog;
+```
+
+**Check failed anchors:**
+
+```sql
+select id, name, domain, diagnostics
+from public.anchors_catalog
+where not operational
+order by last_checked_at desc
+limit 10;
+```
+
+## Cron job monitoring
+
+### Vercel cron logs
+
+Monitor cron job execution:
+
+<Steps>
+  <Step title="Access cron logs">
+    1. Go to API project in Vercel Dashboard
+    2. Click **Settings** → **Cron Jobs**
+    3. View scheduled jobs and execution history
+  </Step>
+
+  <Step title="Check execution status">
+    For each cron run, check:
+    
+    - Execution time
+    - Function duration
+    - Success/failure status
+    - Error messages (if failed)
+  </Step>
+</Steps>
+
+### Manual cron testing
+
+Test cron endpoints manually:
+
+```bash
+# Test anchor sync
+curl "https://api.yourdomain.com/api/anchors/ops?secret=YOUR_SECRET"
+
+# Check response
+{
+  "success": true,
+  "anchorsProcessed": 150,
+  "operational": 142,
+  "failed": 8,
+  "duration": 45000
+}
+```
+
+### Alerting on cron failures
+
+Set up alerts for cron job failures:
+
+1. **Vercel Notifications** - Enable email alerts for failed deployments
+2. **Custom webhook** - Send cron results to a monitoring service
+3. **Database check** - Monitor `last_checked_at` timestamps
+
+## Error tracking
+
+### Implement structured logging
+
+**API service logging:**
+
+```typescript
+import { logger } from './lib/logger';
+
+export default async function handler(req, res) {
+  try {
+    // Your logic here
+    logger.info('Request processed', { userId, action });
+  } catch (error) {
+    logger.error('Request failed', { error, context });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+```
+
+### Common error patterns
+
+Monitor for these error patterns:
+
+**API errors:**
+- `SUPABASE_CONNECTION_ERROR` - Database connectivity issues
+- `STELLAR_NETWORK_ERROR` - Stellar Horizon API failures
+- `ANCHOR_TIMEOUT` - Anchor API timeout errors
+- `INVALID_STELLAR_TOML` - Anchor configuration errors
+
+**Web errors:**
+- `API_REQUEST_FAILED` - Backend API unreachable
+- `WALLET_CONNECTION_FAILED` - Freighter wallet issues
+- `INVALID_NETWORK` - Wrong Stellar network selected
+
+## Performance monitoring
+
+### API response times
+
+Track endpoint performance:
+
+```typescript
+const start = Date.now();
+// Handle request
+const duration = Date.now() - start;
+
+logger.info('Request completed', {
+  endpoint: req.url,
+  method: req.method,
+  duration,
+  status: res.statusCode
+});
+```
+
+### Database query performance
+
+Monitor slow queries in Supabase:
+
+```sql
+-- Find slowest queries
+SELECT 
+  query,
+  calls,
+  total_time,
+  mean_time,
+  max_time
+FROM pg_stat_statements
+ORDER BY mean_time DESC
+LIMIT 10;
+```
+
+### Stellar network performance
+
+Monitor Stellar Horizon API latency:
+
+- Test endpoint: `https://horizon.stellar.org/`
+- Track response times for account queries
+- Monitor transaction submission times
+
+## Uptime monitoring
+
+### External monitoring services
+
+Use external services to monitor uptime:
+
+**Recommended services:**
+- [UptimeRobot](https://uptimerobot.com) - Free tier available
+- [Pingdom](https://www.pingdom.com) - Comprehensive monitoring
+- [Better Uptime](https://betteruptime.com) - Modern uptime monitoring
+
+**Endpoints to monitor:**
+
+```
+https://api.yourdomain.com/api/health
+https://api.yourdomain.com/api/anchors/countries
+https://app.yourdomain.com/
+```
+
+### Status page
+
+Create a public status page:
+
+- Use [Statuspage.io](https://www.statuspage.io)
+- Or build a custom status dashboard
+- Show API, database, and cron job status
+
+## Alerting
+
+### Critical alerts
+
+Set up alerts for critical issues:
+
+<Warning>
+  **Alert on these conditions:**
+  
+  - API error rate > 5%
+  - Database connection failures
+  - Cron job failures for > 2 consecutive runs
+  - Anchor sync hasn't run in > 48 hours
+  - Zero operational anchors for any active corridor
+  - Function timeout rate > 1%
+</Warning>
+
+### Alert channels
+
+**Vercel notifications:**
+- Go to project **Settings** → **Notifications**
+- Enable email alerts for deployment failures
+
+**Custom webhooks:**
+- Send alerts to Slack, Discord, or PagerDuty
+- Configure in Vercel integrations or custom code
+
+**Database-triggered alerts:**
+
+```sql
+-- Create a function to check anchor health
+CREATE OR REPLACE FUNCTION check_anchor_health()
+RETURNS TABLE(corridor TEXT, operational_count BIGINT)
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    country || '->' || type as corridor,
+    count(*) FILTER (WHERE operational) as operational_count
+  FROM anchors_catalog
+  WHERE active = true
+  GROUP BY country, type
+  HAVING count(*) FILTER (WHERE operational) = 0;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+## Debugging tools
+
+### Vercel CLI debugging
+
+```bash
+# View real-time logs
+vercel logs --follow
+
+# Inspect a specific deployment
+vercel inspect [deployment-url]
+
+# Run function locally
+vercel dev --listen 3001
+```
+
+### Database debugging
+
+**Check anchor catalog state:**
+
+```sql
+-- View all anchors with details
+SELECT 
+  id,
+  name,
+  domain,
+  country,
+  type,
+  operational,
+  sep24,
+  sep31,
+  last_checked_at,
+  diagnostics
+FROM anchors_catalog
+ORDER BY last_checked_at DESC;
+```
+
+**Check callback events:**
+
+```sql
+-- Recent callback events
+SELECT *
+FROM anchor_callback_events
+ORDER BY received_at DESC
+LIMIT 20;
+```
+
+### Stellar network debugging
+
+**Test Horizon connectivity:**
+
+```bash
+curl https://horizon.stellar.org/
+curl https://horizon-testnet.stellar.org/
+```
+
+**Check transaction status:**
+
+```bash
+curl https://horizon.stellar.org/transactions/[tx_hash]
+```
+
+## Best practices
+
+<Steps>
+  <Step title="Implement structured logging">
+    Use consistent log formats with context:
+    
+    ```typescript
+    logger.info('event_name', {
+      userId: 'user_123',
+      action: 'compare_routes',
+      corridor: 'US->MX',
+      routesFound: 5
+    });
+    ```
+  </Step>
+
+  <Step title="Set up alerting thresholds">
+    Define alert thresholds based on:
+    
+    - Historical performance data
+    - Business SLAs
+    - User impact severity
+  </Step>
+
+  <Step title="Create runbooks">
+    Document response procedures for common issues:
+    
+    - API service down
+    - Database connection failures
+    - Anchor sync failures
+    - High error rates
+  </Step>
+
+  <Step title="Monitor user journeys">
+    Track key user flows:
+    
+    - Payment route comparison
+    - Payment execution
+    - Proof generation
+    - Wallet connection
+  </Step>
+
+  <Step title="Review metrics regularly">
+    Schedule regular reviews:
+    
+    - Weekly: Error rates, performance trends
+    - Monthly: Capacity planning, cost optimization
+    - Quarterly: Architecture review
+  </Step>
+</Steps>
+
+## Security monitoring
+
+### Monitor for suspicious activity
+
+- **Unusual request patterns** - Spike in errors from single IP
+- **Failed authentication attempts** - Multiple failed cron secret attempts
+- **Data exfiltration** - Large data exports
+- **Configuration changes** - Unexpected environment variable updates
+
+### Audit logs
+
+Enable audit logging for:
+
+- Supabase admin operations
+- Vercel project configuration changes
+- Environment variable updates
+- Production deployments
+
+## Next steps
+
+- [Configure environment variables](/deployment/environment-variables)
+- [Set up anchor catalog sync](/deployment/anchor-catalog-sync)
+- [Deploy to Vercel](/deployment/vercel-deployment)

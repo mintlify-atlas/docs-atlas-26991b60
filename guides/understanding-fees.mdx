@@ -1,0 +1,411 @@
+---
+title: Understanding fees
+description: Complete breakdown of how fees are calculated, displayed, and included in your PayOnProof transfers.
+---
+
+PayOnProof provides full transparency into all fees associated with cross-border transfers. This guide explains how fees are calculated, where they come from, and how to minimize costs.
+
+## Fee transparency
+
+Unlike traditional money transfer services that hide fees in poor exchange rates, PayOnProof shows you:
+
+- **Exact fee percentages**: Total fee as a percentage of your send amount
+- **Absolute fee amounts**: Total fee in your origin currency
+- **Fee breakdown**: Separate fees for on-ramp, bridge, and off-ramp
+- **Real exchange rates**: Market rates separate from fees
+- **Final recipient amount**: Exact amount the recipient receives after all fees
+
+<Note>
+PayOnProof does not charge any fees directly. All fees come from the Stellar network anchors that facilitate on-ramp and off-ramp services.
+</Note>
+
+## Types of fees
+
+Each transfer route includes three components:
+
+### On-ramp fee
+
+The fee charged by the origin anchor (the anchor that accepts your fiat deposit and issues Stellar assets).
+
+- Covers KYC/AML compliance
+- Bank integration and payment processing
+- Liquidity provision
+- Operational costs
+
+**Example**: If you send USD via MoneyGram Access USD, the on-ramp fee covers MoneyGram's cost of accepting your USD deposit and issuing USDC tokens on Stellar.
+
+### Bridge fee
+
+The fee for transferring assets across the Stellar network between anchors.
+
+- Stellar network transaction fees (minimal)
+- Potential intermediary fees if a direct path doesn't exist
+- Liquidity provider fees for asset swaps
+
+**Example**: Converting USDC to EURC on Stellar may require a liquidity pool swap with a small fee.
+
+<Tip>
+Stellar network fees are extremely low (fractions of a cent). Most bridge fees come from liquidity providers or intermediary anchors, not the blockchain itself.
+</Tip>
+
+### Off-ramp fee
+
+The fee charged by the destination anchor (the anchor that redeems Stellar assets and pays out fiat to the recipient).
+
+- Covers recipient payout processing
+- Bank transfers or cash pickup costs
+- Currency conversion if needed
+- Compliance and verification
+
+**Example**: If the recipient receives EUR via MoneyGram Access EUR, the off-ramp fee covers MoneyGram's cost of converting EURC to EUR and delivering it to the recipient.
+
+## How fees are displayed
+
+Fees appear in multiple places throughout the PayOnProof interface:
+
+### In route comparison
+
+When comparing routes, each route card shows:
+
+- **Fee percentage**: Displayed prominently (e.g., "2.5%")
+- **Fee amount**: Absolute amount in origin currency (e.g., "12.50 USD")
+- **Recipient gets**: Final amount after all fees deducted
+
+Example route card:
+
+```
+MoneyGram Access USD → MoneyGram Access EUR
+
+Fee: 2.5% (12.50 USD)
+Estimated time: 1-2 hours
+Exchange rate: 1 USD = 0.92 EUR
+Recipient gets: 450 EUR
+```
+
+### Fee breakdown (expanded view)
+
+Click the expand arrow on any route card to see the detailed breakdown:
+
+```
+Fee Breakdown:
+• On-ramp: 1.2% (6.00 USD)
+• Bridge: 0.1% (0.50 USD)
+• Off-ramp: 1.2% (6.00 USD)
+━━━━━━━━━━━━━━━━━━━━━
+Total: 2.5% (12.50 USD)
+```
+
+This shows exactly where each portion of the fee goes.
+
+### In transaction execution
+
+Before confirming a transfer, the execution screen shows:
+
+```
+Fee: 12.50 USD (2.5%)
+Exchange rate: 1 USD = 0.92 EUR
+Wallet: G0X3...J8K9
+```
+
+Review these details carefully before clicking **Confirm & Start Transfer**.
+
+### In proof of payment
+
+The final proof of payment includes:
+
+- **Total Fees**: Sum of all fees (e.g., "12.50 USD")
+- **Origin Amount**: What you sent (e.g., "500 USD")
+- **Destination Amount**: What the recipient received (e.g., "450 EUR")
+- **Exchange Rate**: The rate applied (e.g., "1 USD = 0.92 EUR")
+
+This permanent record provides full transparency for accounting and tax purposes.
+
+## Fee calculation example
+
+Let's walk through a complete fee calculation:
+
+### Input
+
+- **Origin**: United States (USD)
+- **Destination**: France (EUR)
+- **Amount**: 500 USD
+- **Route**: MoneyGram Access USD → MoneyGram Access EUR
+
+### Fee breakdown
+
+<Steps>
+  <Step title="On-ramp fee (1.2%)">
+    MoneyGram charges 1.2% to accept USD and issue USDC:
+    
+    ```
+    500 USD × 1.2% = 6.00 USD
+    ```
+    
+    After on-ramp: **494.00 USDC** on Stellar
+  </Step>
+
+  <Step title="Bridge fee (0.1%)">
+    Stellar network and liquidity providers charge 0.1%:
+    
+    ```
+    500 USD × 0.1% = 0.50 USD equivalent
+    ```
+    
+    After bridge: **493.50 USDC equivalent**
+  </Step>
+
+  <Step title="Exchange rate application">
+    Convert USDC to EURC at market rate (1 USD = 0.92 EUR):
+    
+    ```
+    493.50 × 0.92 = 454.02 EURC
+    ```
+  </Step>
+
+  <Step title="Off-ramp fee (1.2%)">
+    MoneyGram charges 1.2% to redeem EURC and pay out EUR:
+    
+    ```
+    500 USD × 1.2% = 6.00 USD equivalent (5.52 EUR)
+    ```
+    
+    Final amount: **448.50 EUR**
+  </Step>
+</Steps>
+
+### Summary
+
+- **You send**: 500 USD
+- **Total fees**: 12.50 USD (2.5%)
+- **Exchange rate**: 1 USD = 0.92 EUR
+- **Recipient gets**: 448.50 EUR
+
+<Note>
+Fee percentages are applied to the original amount for consistency. The actual deductions occur at each step (on-ramp, bridge, off-ramp), but displaying them as percentages of the send amount makes comparison easier.
+</Note>
+
+## Comparing fees across routes
+
+When multiple routes are available, compare them based on:
+
+### Total fee percentage
+
+The simplest comparison metric. Lower percentage = more money reaches the recipient.
+
+**Example**:
+- Route A: 2.5% total fee
+- Route B: 3.2% total fee
+- **Route A is cheaper** by 0.7%
+
+### Recipient receives amount
+
+The most important number: what actually arrives on the other end.
+
+**Example** (sending 500 USD):
+- Route A: Recipient gets **448.50 EUR**
+- Route B: Recipient gets **445.00 EUR**
+- **Route A delivers 3.50 EUR more**
+
+### Fee breakdown distribution
+
+Some routes may have higher on-ramp fees but lower off-ramp fees, or vice versa.
+
+**Example**:
+- Route A: On-ramp 1.2%, Bridge 0.1%, Off-ramp 1.2% = **2.5% total**
+- Route B: On-ramp 0.5%, Bridge 0.2%, Off-ramp 2.5% = **3.2% total**
+
+Route A is better overall, even though Route B has a cheaper on-ramp.
+
+<Tip>
+Use the **Cheapest** sort option at the top of the route list to automatically see the lowest-fee routes first.
+</Tip>
+
+## Fee vs. exchange rate
+
+PayOnProof separates fees from exchange rates for clarity:
+
+### Traditional services
+
+Many money transfer services advertise "zero fees" but use poor exchange rates:
+
+```
+Advertised:
+- Fee: 0%
+- Exchange rate: 1 USD = 0.88 EUR (poor rate)
+- You send: 500 USD
+- Recipient gets: 440 EUR
+
+Hidden cost: 20 EUR (4% worse than market rate)
+```
+
+### PayOnProof transparency
+
+PayOnProof shows both explicitly:
+
+```
+- Fee: 2.5%
+- Exchange rate: 1 USD = 0.92 EUR (market rate)
+- You send: 500 USD
+- Recipient gets: 448.50 EUR
+
+Actual cost: 12.50 USD (2.5% transparent fee)
+```
+
+<Warning>
+When comparing PayOnProof to other services, calculate the **effective total cost** by comparing:
+
+1. How much you send
+2. How much the recipient receives
+3. The difference is the true cost
+
+Don't trust "zero fee" claims without checking the exchange rate.
+</Warning>
+
+## How to minimize fees
+
+<Steps>
+  <Step title="Compare all available routes">
+    Don't just pick the first route—sort by **Cheapest** and review all options. Fee differences can be significant.
+  </Step>
+
+  <Step title="Consider larger transfers">
+    Many anchors have fixed minimum fees or better rates for larger amounts. Combining multiple small transfers into one larger transfer can reduce the effective fee percentage.
+    
+    <Note>
+    PayOnProof shows percentage fees, but some anchors may have minimum fee amounts not visible in the preview. Check the anchor's terms for details.
+    </Note>
+  </Step>
+
+  <Step title="Check timing">
+    If you're not in a rush, compare fees across routes with different speeds. Sometimes faster routes charge premium fees, while slower routes are cheaper.
+  </Step>
+
+  <Step title="Watch for promotions">
+    Anchors occasionally offer promotional rates or reduced fees. PayOnProof displays real-time fees, so you'll automatically see any promotions in the route comparison.
+  </Step>
+</Steps>
+
+## Fee-related FAQs
+
+<Accordion title="Does PayOnProof charge any fees?">
+No. PayOnProof does not charge fees for using the platform. All fees shown come directly from the Stellar anchors that provide on-ramp and off-ramp services.
+
+PayOnProof's business model focuses on providing transparency and tooling. Anchor fees are passed through exactly as charged, with no markup.
+</Accordion>
+
+<Accordion title="Why do fees vary between routes?">
+Each anchor sets their own fees based on:
+
+- Regulatory and compliance costs in their jurisdiction
+- Payment method costs (bank transfer, cash pickup, mobile money, etc.)
+- Liquidity availability
+- Operational efficiency
+- Market competition
+
+Routes using different anchors will have different fee structures.
+</Accordion>
+
+<Accordion title="Are there any hidden fees?">
+PayOnProof displays all fees reported by the anchors. However, be aware of potential additional costs:
+
+- **Bank fees**: Your bank may charge for international wires or currency conversion
+- **Recipient bank fees**: The recipient's bank may deduct fees from incoming transfers
+- **Exchange rate fluctuations**: Rates can change between route comparison and execution (though PayOnProof locks rates at the time of route selection)
+
+These external fees are outside PayOnProof's control and not included in the displayed fee totals.
+</Accordion>
+
+<Accordion title="Can fees change after I select a route?">
+Fees displayed at route selection are locked for that transaction. However:
+
+- If you go back and search again, fees may have changed based on current anchor pricing
+- Fees are recalculated on each search to reflect real-time anchor data
+- The final proof of payment shows the actual fees charged, which should match what you saw at confirmation
+
+If there's a discrepancy, contact PayOnProof support with your transaction ID.
+</Accordion>
+
+<Accordion title="How are fees deducted?">
+Fees are deducted progressively at each step:
+
+1. **On-ramp**: Deducted when you deposit fiat and receive Stellar assets
+2. **Bridge**: Deducted during the Stellar network transfer and any swaps
+3. **Off-ramp**: Deducted when Stellar assets are redeemed for fiat payout
+
+The **Recipient gets** amount shown in PayOnProof is the final amount after all three deductions.
+</Accordion>
+
+<Accordion title="Why is the bridge fee so low?">
+Stellar is designed for fast, low-cost transfers. Network transaction fees are typically:
+
+- **0.00001 XLM** per operation (fractions of a cent)
+- Minimal liquidity provider fees if swaps are needed
+
+This is one of the key advantages of using Stellar-based infrastructure versus traditional correspondent banking networks with high intermediary fees.
+</Accordion>
+
+## Fee transparency in action
+
+Here's what PayOnProof shows at each step:
+
+### Route comparison
+
+```
+┌─────────────────────────────────────────┐
+│ MoneyGram USD → MoneyGram EUR           │
+│                                         │
+│ Fee: 2.5% (12.50 USD)                   │
+│ Time: 1-2 hours                         │
+│ Rate: 1 USD = 0.92 EUR                  │
+│ Recipient gets: 448.50 EUR              │
+│                                         │
+│ [Expand for breakdown]                  │
+└─────────────────────────────────────────┘
+```
+
+### Expanded breakdown
+
+```
+Fee Breakdown:
+• On-ramp (MoneyGram USD): 1.2% (6.00 USD)
+• Bridge (Stellar network): 0.1% (0.50 USD)
+• Off-ramp (MoneyGram EUR): 1.2% (6.00 USD)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total fees: 2.5% (12.50 USD)
+```
+
+### Transaction confirmation
+
+```
+Sending: 500 USD
+Recipient gets: 448.50 EUR
+
+Fee: 12.50 USD (2.5%)
+Exchange rate: 1 USD = 0.92 EUR
+Wallet: G0X3...J8K9
+```
+
+### Proof of payment
+
+```
+PROOF OF PAYMENT - POP
+Status: VERIFIED
+
+TRANSFER DETAILS
+Origin: 500 USD
+Received: 448.50 EUR
+Exchange Rate: 1 USD = 0.92 EUR
+Total Fees: 12.50 USD
+Route: MoneyGram Access USD > MoneyGram Access EUR
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sending payments" href="/guides/sending-payments">
+    Learn how to send a payment and see fees in action
+  </Card>
+  <Card title="Verifying proofs" href="/guides/verifying-proofs">
+    View fee information in your proof of payment
+  </Card>
+</CardGroup>

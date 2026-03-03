@@ -1,0 +1,175 @@
+---
+title: Countries
+description: Get anchor coverage by country with currency and operational statistics
+---
+
+<RequestExample>
+
+```bash cURL
+curl https://api.payonproof.com/api/anchors/countries
+```
+
+```bash cURL (include non-operational)
+curl "https://api.payonproof.com/api/anchors/countries?includeNonOperational=true"
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.payonproof.com/api/anchors/countries');
+const data = await response.json();
+console.log(data.countries);
+```
+
+```python Python
+import requests
+
+response = requests.get('https://api.payonproof.com/api/anchors/countries')
+data = response.json()
+print(data['countries'])
+```
+
+</RequestExample>
+
+## GET /api/anchors/countries
+
+Returns a list of countries with anchor coverage, including supported currencies and operational statistics.
+
+### Query parameters
+
+<ParamField query="includeNonOperational" type="boolean" default="false">
+  Include countries with only non-operational anchors. By default, only countries with at least one operational anchor are returned.
+</ParamField>
+
+### Response
+
+<ResponseField name="countries" type="array">
+  Array of country objects sorted alphabetically by name
+  
+  <Expandable title="Country object">
+    <ResponseField name="code" type="string">
+      ISO 3166-1 alpha-2 country code (e.g., "US", "PH")
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Full country name in English (e.g., "United States", "Philippines")
+    </ResponseField>
+    
+    <ResponseField name="currencies" type="array">
+      Array of currency codes supported by anchors in this country (e.g., ["USD", "USDC"])
+    </ResponseField>
+    
+    <ResponseField name="onRampCount" type="number">
+      Number of on-ramp anchors (deposit: fiat → crypto)
+    </ResponseField>
+    
+    <ResponseField name="offRampCount" type="number">
+      Number of off-ramp anchors (withdraw: crypto → fiat)
+    </ResponseField>
+    
+    <ResponseField name="operationalAnchors" type="number">
+      Number of anchors with full operational capabilities (SEP-10, SEP-24)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Response example
+
+```json
+{
+  "countries": [
+    {
+      "code": "BR",
+      "name": "Brazil",
+      "currencies": ["BRL", "USD"],
+      "onRampCount": 2,
+      "offRampCount": 2,
+      "operationalAnchors": 2
+    },
+    {
+      "code": "PH",
+      "name": "Philippines",
+      "currencies": ["PHP"],
+      "onRampCount": 1,
+      "offRampCount": 1,
+      "operationalAnchors": 1
+    },
+    {
+      "code": "US",
+      "name": "United States",
+      "currencies": ["USD", "USDC"],
+      "onRampCount": 3,
+      "offRampCount": 3,
+      "operationalAnchors": 3
+    }
+  ]
+}
+```
+
+### Error responses
+
+**405 Method Not Allowed**
+
+```json
+{
+  "error": "Method not allowed"
+}
+```
+
+**500 Internal Server Error**
+
+```json
+{
+  "error": "Failed to retrieve anchor catalog"
+}
+```
+
+## Use cases
+
+### Display coverage map
+
+```javascript
+const { countries } = await fetch('/api/anchors/countries').then(r => r.json());
+
+const coverageMap = countries.map(c => ({
+  country: c.name,
+  code: c.code,
+  coverage: c.operationalAnchors > 0 ? 'full' : 'limited',
+  rampTypes: {
+    canDeposit: c.onRampCount > 0,
+    canWithdraw: c.offRampCount > 0
+  }
+}));
+```
+
+### Filter by currency support
+
+```javascript
+const usdcCountries = countries.filter(c => 
+  c.currencies.includes('USDC') && c.operationalAnchors > 0
+);
+```
+
+### Check remittance corridor availability
+
+```javascript
+function isCorridorAvailable(origin, destination, countries) {
+  const originCountry = countries.find(c => c.code === origin);
+  const destCountry = countries.find(c => c.code === destination);
+  
+  return originCountry?.onRampCount > 0 && 
+         destCountry?.offRampCount > 0 &&
+         originCountry.operationalAnchors > 0 &&
+         destCountry.operationalAnchors > 0;
+}
+
+if (isCorridorAvailable('US', 'PH', countries)) {
+  console.log('Remittance corridor available');
+}
+```
+
+## Implementation notes
+
+- Country names are resolved using `Intl.DisplayNames` API when available
+- Countries with code "ZZ" (unknown/international) are excluded
+- By default, only countries with `operationalAnchors > 0` are returned
+- A country appears if it has at least one on-ramp OR off-ramp anchor
+- Currency list is deduplicated across all anchors in the country

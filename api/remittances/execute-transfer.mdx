@@ -1,0 +1,411 @@
+---
+title: Execute transfer
+description: Multi-phase API for executing cross-border remittances via Stellar anchors
+---
+
+<Note>
+This endpoint uses a three-phase flow: **prepare**, **authorize**, **status**. Each phase requires a separate POST request.
+</Note>
+
+<RequestExample>
+
+```bash cURL (prepare)
+curl -X POST https://api.payonproof.com/api/execute-transfer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phase": "prepare",
+    "route": {
+      "id": "route_abc123",
+      "originAnchor": {"id": "anchor_us_1"},
+      "destinationAnchor": {"id": "anchor_ph_1"},
+      "originCurrency": "USD",
+      "destinationCurrency": "PHP",
+      "available": true
+    },
+    "amount": 100,
+    "senderAccount": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  }'
+```
+
+```bash cURL (authorize)
+curl -X POST https://api.payonproof.com/api/execute-transfer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phase": "authorize",
+    "prepared": {...},
+    "signatures": {
+      "origin": "<signed_challenge_xdr>",
+      "destination": "<signed_challenge_xdr>"
+    }
+  }'
+```
+
+```bash cURL (status)
+curl -X POST https://api.payonproof.com/api/execute-transfer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phase": "status",
+    "transactionId": "POP-1234567890-ABC123",
+    "statusRef": "<encrypted_status_ref>"
+  }'
+```
+
+</RequestExample>
+
+## POST /api/execute-transfer
+
+Executes cross-border transfers using Stellar anchors via SEP-10 authentication and SEP-24 interactive flows.
+
+### Three-phase execution flow
+
+1. **prepare**: Generate SEP-10 challenges for both anchors
+2. **authorize**: Exchange signed challenges for JWTs, start SEP-24 interactive flows
+3. **status**: Poll transaction status without exposing anchor JWTs to frontend
+
+---
+
+## Phase 1: Prepare
+
+Generates SEP-10 authentication challenges for the selected route's origin and destination anchors.
+
+### Request body (prepare)
+
+<ParamField body="phase" type="string" required>
+  Must be `"prepare"`
+</ParamField>
+
+<ParamField body="route" type="object" required>
+  Route object from `/api/compare-routes`
+  <Expandable title="Route structure">
+    <ParamField body="id" type="string" required>Route ID</ParamField>
+    <ParamField body="originAnchor.id" type="string" required>Origin anchor ID</ParamField>
+    <ParamField body="destinationAnchor.id" type="string" required>Destination anchor ID</ParamField>
+    <ParamField body="originCurrency" type="string">Origin currency code</ParamField>
+    <ParamField body="destinationCurrency" type="string">Destination currency code</ParamField>
+    <ParamField body="available" type="boolean" required>Must be `true`</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="amount" type="number" required>
+  Transfer amount in origin currency (must be > 0)
+</ParamField>
+
+<ParamField body="senderAccount" type="string" required>
+  Stellar public key (G...) of sender
+</ParamField>
+
+### Response (prepare)
+
+<ResponseField name="status" type="string">
+  "needs_signature"
+</ResponseField>
+
+<ResponseField name="meta" type="object">
+  <ResponseField name="clientDomain" type="string">Client domain used for SEP-10</ResponseField>
+</ResponseField>
+
+<ResponseField name="prepared" type="object">
+  <ResponseField name="transactionId" type="string">Unique transaction ID (e.g., "POP-1234567890-ABC123")</ResponseField>
+  <ResponseField name="routeId" type="string">Route ID</ResponseField>
+  <ResponseField name="senderAccount" type="string">Sender's Stellar account</ResponseField>
+  <ResponseField name="amount" type="number">Transfer amount</ResponseField>
+  <ResponseField name="createdAt" type="string">ISO 8601 timestamp</ResponseField>
+  <ResponseField name="anchors" type="array">
+    Array of anchor auth objects (origin and destination)
+    <Expandable title="Anchor auth object">
+      <ResponseField name="role" type="string">"origin" or "destination"</ResponseField>
+      <ResponseField name="anchorId" type="string">Anchor ID</ResponseField>
+      <ResponseField name="anchorName" type="string">Anchor name</ResponseField>
+      <ResponseField name="domain" type="string">Anchor domain</ResponseField>
+      <ResponseField name="assetCode" type="string">Asset code (e.g., "USD", "USDC")</ResponseField>
+      <ResponseField name="assetIssuer" type="string">Asset issuer public key (if applicable)</ResponseField>
+      <ResponseField name="amount" type="number">Amount for this anchor</ResponseField>
+      <ResponseField name="account" type="string">Sender account</ResponseField>
+      <ResponseField name="webAuthEndpoint" type="string">SEP-10 auth endpoint</ResponseField>
+      <ResponseField name="transferServerSep24" type="string">SEP-24 transfer server</ResponseField>
+      <ResponseField name="challengeXdr" type="string">SEP-10 challenge XDR (sign this!)</ResponseField>
+      <ResponseField name="networkPassphrase" type="string">Stellar network passphrase</ResponseField>
+    </Expandable>
+  </ResponseField>
+</ResponseField>
+
+### Example response (prepare)
+
+```json
+{
+  "status": "needs_signature",
+  "meta": {
+    "clientDomain": "app.payonproof.com"
+  },
+  "prepared": {
+    "transactionId": "POP-1709467200-A3F9B2",
+    "routeId": "route_abc123",
+    "senderAccount": "GXXXXXXXXXXXXXXX",
+    "amount": 100,
+    "createdAt": "2026-03-03T10:00:00.000Z",
+    "anchors": [
+      {
+        "role": "origin",
+        "anchorId": "anchor_us_1",
+        "anchorName": "MoneyGram",
+        "domain": "stellar.moneygram.com",
+        "assetCode": "USDC",
+        "assetIssuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": 100,
+        "account": "GXXXXXXXXXXXXXXX",
+        "webAuthEndpoint": "https://stellar.moneygram.com/auth",
+        "transferServerSep24": "https://stellar.moneygram.com/sep24",
+        "challengeXdr": "AAAAAgAAAAC...",
+        "networkPassphrase": "Public Global Stellar Network ; September 2015"
+      },
+      {
+        "role": "destination",
+        "anchorId": "anchor_ph_1",
+        "anchorName": "Philippines Anchor",
+        "domain": "anchor.example.ph",
+        "assetCode": "PHP",
+        "amount": 100,
+        "account": "GXXXXXXXXXXXXXXX",
+        "webAuthEndpoint": "https://anchor.example.ph/auth",
+        "transferServerSep24": "https://anchor.example.ph/sep24",
+        "challengeXdr": "AAAAAgAAAAD...",
+        "networkPassphrase": "Public Global Stellar Network ; September 2015"
+      }
+    ]
+  }
+}
+```
+
+---
+
+## Phase 2: Authorize
+
+Exchanges signed SEP-10 challenges for JWT tokens and initiates SEP-24 interactive flows.
+
+### Request body (authorize)
+
+<ParamField body="phase" type="string" required>
+  Must be `"authorize"`
+</ParamField>
+
+<ParamField body="prepared" type="object" required>
+  The entire `prepared` object from the prepare phase response
+</ParamField>
+
+<ParamField body="signatures" type="object" required>
+  Signed challenge XDRs for each anchor role
+  <Expandable title="Signature structure">
+    <ParamField body="origin" type="string" required>Signed challenge XDR for origin anchor</ParamField>
+    <ParamField body="destination" type="string" required>Signed challenge XDR for destination anchor</ParamField>
+  </Expandable>
+</ParamField>
+
+### Response (authorize)
+
+<ResponseField name="status" type="string">
+  "processing"
+</ResponseField>
+
+<ResponseField name="transaction" type="object">
+  <ResponseField name="id" type="string">Transaction ID</ResponseField>
+  <ResponseField name="routeId" type="string">Route ID</ResponseField>
+  <ResponseField name="amount" type="number">Transfer amount</ResponseField>
+  <ResponseField name="status" type="string">"processing"</ResponseField>
+  <ResponseField name="createdAt" type="string">ISO 8601 timestamp</ResponseField>
+  <ResponseField name="senderAccount" type="string">Sender account</ResponseField>
+  <ResponseField name="statusRef" type="string">Encrypted status reference (save this!)</ResponseField>
+  <ResponseField name="callbackUrl" type="string">Webhook URL for anchor callbacks</ResponseField>
+  <ResponseField name="popEnv" type="string">Environment ("staging" or "production")</ResponseField>
+  <ResponseField name="anchorFlows" type="object">
+    <ResponseField name="originDeposit" type="object">
+      <ResponseField name="id" type="string">SEP-24 transaction ID</ResponseField>
+      <ResponseField name="url" type="string">Interactive flow URL (open in browser/iframe)</ResponseField>
+      <ResponseField name="type" type="string">Flow type</ResponseField>
+      <ResponseField name="anchorName" type="string">Anchor name</ResponseField>
+    </ResponseField>
+    <ResponseField name="destinationWithdraw" type="object">
+      Same structure as originDeposit
+    </ResponseField>
+  </ResponseField>
+</ResponseField>
+
+### Example response (authorize)
+
+```json
+{
+  "status": "processing",
+  "transaction": {
+    "id": "POP-1709467200-A3F9B2",
+    "routeId": "route_abc123",
+    "amount": 100,
+    "status": "processing",
+    "createdAt": "2026-03-03T10:00:00.000Z",
+    "senderAccount": "GXXXXXXXXXXXXXXX",
+    "statusRef": "aGVsbG8ud29ybGQ.dGFn.ZW5jcnlwdGVk",
+    "callbackUrl": "https://api.payonproof.com/api/anchors/sep24/callback?transactionId=POP-1709467200-A3F9B2&callbackToken=abc123&secret=...",
+    "popEnv": "production",
+    "anchorFlows": {
+      "originDeposit": {
+        "id": "mg_dep_12345",
+        "url": "https://stellar.moneygram.com/sep24/interactive?token=...",
+        "type": "interactive_customer_info_needed",
+        "anchorName": "MoneyGram"
+      },
+      "destinationWithdraw": {
+        "id": "ph_wd_67890",
+        "url": "https://anchor.example.ph/sep24/interactive?token=...",
+        "type": "interactive_customer_info_needed",
+        "anchorName": "Philippines Anchor"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Phase 3: Status
+
+Polls transaction status from both anchors without exposing JWTs to the frontend.
+
+### Request body (status)
+
+<ParamField body="phase" type="string" required>
+  Must be `"status"`
+</ParamField>
+
+<ParamField body="transactionId" type="string" required>
+  Transaction ID from authorize phase
+</ParamField>
+
+<ParamField body="statusRef" type="string" required>
+  Encrypted status reference from authorize phase
+</ParamField>
+
+### Response (status)
+
+<ResponseField name="status" type="string">
+  "ok"
+</ResponseField>
+
+<ResponseField name="transactionId" type="string">
+  Transaction ID
+</ResponseField>
+
+<ResponseField name="stellarTxHash" type="string">
+  Stellar transaction hash (if available)
+</ResponseField>
+
+<ResponseField name="completed" type="boolean">
+  Whether transaction is complete
+</ResponseField>
+
+<ResponseField name="source" type="string">
+  "callback" if from anchor callback, otherwise from polling
+</ResponseField>
+
+<ResponseField name="anchors" type="array">
+  Per-anchor status results
+  <Expandable title="Anchor status">
+    <ResponseField name="role" type="string">"origin" or "destination"</ResponseField>
+    <ResponseField name="anchorName" type="string">Anchor name</ResponseField>
+    <ResponseField name="interactiveId" type="string">SEP-24 transaction ID</ResponseField>
+    <ResponseField name="ok" type="boolean">Whether status fetch succeeded</ResponseField>
+    <ResponseField name="status" type="string">Transaction status (e.g., "pending_user_transfer_start", "completed")</ResponseField>
+    <ResponseField name="stellarTxHash" type="string">Stellar transaction hash (if available)</ResponseField>
+    <ResponseField name="externalTransactionId" type="string">External reference ID</ResponseField>
+    <ResponseField name="error" type="string">Error message if ok=false</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example response (status)
+
+```json
+{
+  "status": "ok",
+  "transactionId": "POP-1709467200-A3F9B2",
+  "stellarTxHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+  "completed": true,
+  "source": "polling",
+  "anchors": [
+    {
+      "role": "origin",
+      "anchorName": "MoneyGram",
+      "interactiveId": "mg_dep_12345",
+      "ok": true,
+      "status": "completed",
+      "stellarTxHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+      "externalTransactionId": "MG123456789"
+    },
+    {
+      "role": "destination",
+      "anchorName": "Philippines Anchor",
+      "interactiveId": "ph_wd_67890",
+      "ok": true,
+      "status": "completed"
+    }
+  ]
+}
+```
+
+---
+
+## Error responses
+
+**400 Bad Request - Invalid phase**
+
+```json
+{
+  "error": "Invalid phase. Use 'prepare', 'authorize', or 'status'."
+}
+```
+
+**400 Bad Request - Route not operational**
+
+```json
+{
+  "error": "Selected route is not operational. Choose an available route (anchors with valid SEP-10/SEP-24)."
+}
+```
+
+**400 Bad Request - Missing client domain**
+
+```json
+{
+  "error": "Unable to resolve client_domain for SEP-10. Set SEP10_CLIENT_DOMAIN in API env."
+}
+```
+
+**502 Bad Gateway - Anchor service failure**
+
+```json
+{
+  "error": "SEP-10 challenge failed at https://anchor.example.com/auth (404): Not Found"
+}
+```
+
+## Implementation notes
+
+### Security features
+
+- Status polling state is encrypted using `EXECUTION_STATE_SECRET`
+- Anchor JWTs never exposed to frontend
+- Client domain signatures handled server-side
+- SEP-24 callbacks authenticated via `ANCHOR_CALLBACK_SECRET`
+
+### MoneyGram-specific behavior
+
+- Requires `MONEYGRAM_USER_ID` memo for identification
+- Uses special USDC issuer: `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`
+- Automatically routes to preview/ext environments based on `MONEYGRAM_USE_PREVIEW` and `POP_ENV`
+
+### SEP-10 challenge caching
+
+- Challenges cached for 30 seconds to avoid duplicate requests
+- Multiple fallback strategies for challenge parameters (memo, home_domain, client_domain)
+
+### Asset resolution
+
+- Automatically resolves asset codes from SEP-24 /info endpoint
+- Falls back to first enabled asset if requested asset not found
+- Prefers assets with issuer over fiat-like codes

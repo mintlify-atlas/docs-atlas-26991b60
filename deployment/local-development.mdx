@@ -1,0 +1,217 @@
+---
+title: Local development
+description: Set up PayOnProof locally for development and testing
+---
+
+This guide walks you through setting up the PayOnProof platform on your local machine for development.
+
+## Architecture overview
+
+PayOnProof consists of two separate services:
+
+- **Frontend** (`services/web`) - Next.js application with React and TypeScript
+- **Backend** (`services/api`) - Vercel serverless REST API with Node.js and TypeScript
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+- Node.js 20 or higher
+- npm or pnpm package manager
+- Git
+- A Supabase account (for database)
+- A Stellar testnet account (for blockchain operations)
+
+## Installation steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the PayOnProof repository to your local machine:
+
+    ```bash
+    git clone https://github.com/your-org/payonproof.git
+    cd payonproof
+    ```
+  </Step>
+
+  <Step title="Install API dependencies">
+    Navigate to the API service and install dependencies:
+
+    ```bash
+    cd services/api
+    npm install
+    ```
+  </Step>
+
+  <Step title="Install Web dependencies">
+    Navigate to the web service and install dependencies:
+
+    ```bash
+    cd services/web
+    npm install
+    ```
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create environment files from the examples:
+
+    **API Service:**
+    ```bash
+    cd services/api
+    cp .env.example .env
+    ```
+
+    **Web Service:**
+    ```bash
+    cd services/web
+    cp .env.example .env.local
+    ```
+
+    See [Environment variables](/deployment/environment-variables) for detailed configuration.
+  </Step>
+
+  <Step title="Set up the database">
+    Run the SQL migration files to create the required database tables.
+
+    See [Database setup](/deployment/database-setup) for detailed instructions.
+  </Step>
+
+  <Step title="Start the development servers">
+    You'll need two terminal windows:
+
+    **Terminal 1 - API Service:**
+    ```bash
+    cd services/api
+    npm run dev
+    ```
+
+    The API will start on `http://localhost:3001`
+
+    **Terminal 2 - Web Service:**
+    ```bash
+    cd services/web
+    npm run dev
+    ```
+
+    The web app will start on `http://localhost:3000`
+  </Step>
+</Steps>
+
+## Development server options
+
+The API service provides multiple development modes:
+
+<CodeGroup>
+```bash Standard mode
+npm run dev
+```
+
+```bash TypeScript native mode
+npm run dev:ts
+```
+
+```bash Vercel CLI mode
+npm run dev:vercel
+```
+</CodeGroup>
+
+<Note>
+  The standard `npm run dev` command builds the TypeScript files and runs the local server. This is the recommended approach for most development work.
+</Note>
+
+## Project structure
+
+```text
+payonproof/
+  services/
+    web/                    # Frontend (Next.js)
+      app/                  # Next.js routes and pages
+      components/           # UI and feature components
+      hooks/                # React hooks
+      lib/                  # Frontend utilities and API clients
+      public/               # Static assets
+
+    api/                    # Backend (Vercel Functions)
+      api/                  # HTTP endpoint handlers
+        anchors/
+        remittances/
+        proofs/
+      lib/
+        modules/            # Business logic layer
+        providers/          # External integrations (Stellar, etc.)
+        repositories/       # Database persistence (Supabase)
+        http.ts
+        stellar.ts
+        supabase.ts
+      sql/                  # Database migration files
+      scripts/              # Utility scripts for anchor sync
+```
+
+## Development workflow
+
+### Backend development
+
+**Create new endpoints** in `services/api/api/...`
+
+**Add business logic** in `services/api/lib/modules/...`
+
+**Add external integrations** in `services/api/lib/providers/stellar/...`
+
+**Add database access** in `services/api/lib/repositories/...`
+
+**Architecture flow:**
+```
+Endpoint → Module → Provider/Repository
+```
+
+### Frontend development
+
+**Create new pages** in `services/web/app/.../page.tsx`
+
+**Create components** in `services/web/components/...`
+
+**Call backend APIs** from `services/web/lib/api.ts`
+
+<Warning>
+  Never expose backend secrets as `NEXT_PUBLIC_*` environment variables. Frontend code should only call backend REST endpoints.
+</Warning>
+
+## Verifying the setup
+
+Once both services are running, verify your setup:
+
+1. Open `http://localhost:3000` in your browser
+2. Check that the API is responding at `http://localhost:3001/api/health` (if available)
+3. Test the anchor catalog endpoint: `http://localhost:3001/api/anchors/catalog`
+
+## Troubleshooting
+
+### Port conflicts
+
+If ports 3000 or 3001 are already in use, you can modify the ports:
+
+```bash
+# Web service
+PORT=3002 npm run dev
+
+# API service - modify local-server.ts
+```
+
+### Database connection errors
+
+Verify your Supabase credentials in `services/api/.env`:
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+### Stellar network errors
+
+Ensure you're using the correct Stellar Horizon URL and network passphrase:
+- Testnet: `https://horizon-testnet.stellar.org`
+- Mainnet: `https://horizon.stellar.org`
+
+## Next steps
+
+- [Configure environment variables](/deployment/environment-variables)
+- [Set up the database](/deployment/database-setup)
+- [Deploy to Vercel](/deployment/vercel-deployment)
+- [Configure anchor catalog sync](/deployment/anchor-catalog-sync)

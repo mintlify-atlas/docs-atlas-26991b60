@@ -1,0 +1,83 @@
+---
+title: API overview
+description: Complete reference for the PayOnProof REST API endpoints
+---
+
+The PayOnProof API provides RESTful endpoints for executing cross-border remittances via Stellar anchors, comparing routes, generating proofs of payment, and managing anchor integrations.
+
+## Base URL
+
+```
+https://api.payonproof.com
+```
+
+All API requests are made over HTTPS. The API returns JSON responses and accepts JSON request bodies.
+
+## Authentication
+
+Most endpoints are publicly accessible. Administrative operations (`/api/anchors/ops`) require proper authorization through cron secrets or Vercel cron headers.
+
+See [Authentication](/api/authentication) for details.
+
+## Endpoint categories
+
+### Remittances
+
+Execute and manage cross-border transfers through Stellar anchors:
+
+- **[POST /api/execute-transfer](/api/remittances/execute-transfer)** - Multi-phase transfer execution (prepare, authorize, status)
+- **[POST /api/compare-routes](/api/anchors/compare-routes)** - Compare available remittance routes
+
+### Anchors
+
+Discover and interact with Stellar anchor services:
+
+- **[GET /api/anchors/catalog](/api/anchors/catalog)** - List active anchors with filtering
+- **[GET /api/anchors/countries](/api/anchors/countries)** - Get anchor coverage by country
+- **[POST /api/anchors/diagnostics](/api/anchors/diagnostics)** - Test anchor capabilities (SEP-1, SEP-6, SEP-10, SEP-24)
+- **[POST /api/anchors/ops](/api/anchors/capabilities)** - Administrative operations for anchor management
+
+### Proofs
+
+Generate cryptographic proofs of completed transactions:
+
+- **[POST /api/generate-proof](/api/proofs/generate)** - Generate proof of payment after transaction settlement
+
+### Operations
+
+Health and system diagnostics:
+
+- **[GET /api/health](/api/operations/health)** - Service health status
+
+## Rate limits
+
+Currently no rate limits are enforced on public endpoints. Administrative endpoints require proper authorization.
+
+## Error handling
+
+All endpoints return standard HTTP status codes:
+
+| Code | Meaning |
+|------|--------|
+| 200 | Success |
+| 400 | Bad Request - Invalid parameters |
+| 401 | Unauthorized - Missing or invalid authorization |
+| 405 | Method Not Allowed |
+| 500 | Internal Server Error |
+| 502 | Bad Gateway - External service failure (anchor, Horizon, etc.) |
+| 503 | Service Unavailable - System degraded |
+
+### Error response format
+
+```json
+{
+  "error": "Missing field: transactionId"
+}
+```
+
+## CORS
+
+CORS is enabled for all public endpoints with the following methods:
+- `GET`, `POST`, `OPTIONS`
+
+Preflight `OPTIONS` requests are handled automatically.

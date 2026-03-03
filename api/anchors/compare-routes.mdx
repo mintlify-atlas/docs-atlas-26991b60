@@ -1,0 +1,224 @@
+---
+title: Compare routes
+description: Compare available remittance routes between origin and destination countries
+---
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://api.payonproof.com/api/compare-routes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "origin": "US",
+    "destination": "PH",
+    "amount": 100
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.payonproof.com/api/compare-routes', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    origin: 'US',
+    destination: 'PH',
+    amount: 100
+  })
+});
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.post(
+  'https://api.payonproof.com/api/compare-routes',
+  json={
+    'origin': 'US',
+    'destination': 'PH',
+    'amount': 100
+  }
+)
+data = response.json()
+```
+
+</RequestExample>
+
+## POST /api/compare-routes
+
+Compares available remittance routes from origin to destination country, returning scored routes with fee calculations and exchange rates.
+
+This endpoint:
+- Filters anchors by country and operational status
+- Calculates fees (fixed + percentage)
+- Computes exchange rates
+- Scores routes based on cost, speed, and anchor reliability
+- Returns sorted routes (best first)
+
+### Request body
+
+<ParamField body="origin" type="string" required>
+  Origin country code (ISO 3166-1 alpha-2 format, e.g., "US")
+</ParamField>
+
+<ParamField body="destination" type="string" required>
+  Destination country code (ISO 3166-1 alpha-2 format, e.g., "PH")
+</ParamField>
+
+<ParamField body="amount" type="number" required>
+  Transfer amount in origin currency. Must be greater than 0.
+</ParamField>
+
+### Response
+
+<ResponseField name="routes" type="array">
+  Array of available routes, sorted by score (best routes first)
+  
+  <Expandable title="Route object">
+    <ResponseField name="id" type="string">
+      Unique route identifier
+    </ResponseField>
+    
+    <ResponseField name="originAnchor" type="object">
+      Origin anchor information
+      <Expandable title="Anchor details">
+        <ResponseField name="id" type="string">Anchor ID</ResponseField>
+        <ResponseField name="name" type="string">Anchor name</ResponseField>
+        <ResponseField name="domain" type="string">Anchor domain</ResponseField>
+        <ResponseField name="country" type="string">Country code</ResponseField>
+        <ResponseField name="currency" type="string">Currency code</ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="destinationAnchor" type="object">
+      Destination anchor information (same structure as originAnchor)
+    </ResponseField>
+    
+    <ResponseField name="originCurrency" type="string">
+      Origin currency code (e.g., "USD")
+    </ResponseField>
+    
+    <ResponseField name="destinationCurrency" type="string">
+      Destination currency code (e.g., "PHP")
+    </ResponseField>
+    
+    <ResponseField name="originAmount" type="number">
+      Amount to send in origin currency
+    </ResponseField>
+    
+    <ResponseField name="destinationAmount" type="number">
+      Amount recipient receives in destination currency
+    </ResponseField>
+    
+    <ResponseField name="exchangeRate" type="number">
+      Exchange rate applied (destination/origin)
+    </ResponseField>
+    
+    <ResponseField name="totalFees" type="number">
+      Total fees in origin currency (sum of origin and destination fees)
+    </ResponseField>
+    
+    <ResponseField name="originFee" type="number">
+      Fee charged by origin anchor
+    </ResponseField>
+    
+    <ResponseField name="destinationFee" type="number">
+      Fee charged by destination anchor (converted to origin currency)
+    </ResponseField>
+    
+    <ResponseField name="score" type="number">
+      Route quality score (0-100, higher is better)
+    </ResponseField>
+    
+    <ResponseField name="available" type="boolean">
+      Whether route is operational (both anchors support SEP-10 and SEP-24)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="summary" type="object">
+  <ResponseField name="totalRoutes" type="number">Total routes found</ResponseField>
+  <ResponseField name="availableRoutes" type="number">Operational routes</ResponseField>
+  <ResponseField name="bestRate" type="number">Best exchange rate found</ResponseField>
+  <ResponseField name="lowestFee" type="number">Lowest total fee found</ResponseField>
+</ResponseField>
+
+### Response example
+
+```json
+{
+  "routes": [
+    {
+      "id": "route_abc123",
+      "originAnchor": {
+        "id": "anchor_us_1",
+        "name": "MoneyGram",
+        "domain": "stellar.moneygram.com",
+        "country": "US",
+        "currency": "USD"
+      },
+      "destinationAnchor": {
+        "id": "anchor_ph_1",
+        "name": "Philippines Anchor",
+        "domain": "anchor.ph",
+        "country": "PH",
+        "currency": "PHP"
+      },
+      "originCurrency": "USD",
+      "destinationCurrency": "PHP",
+      "originAmount": 100,
+      "destinationAmount": 5450,
+      "exchangeRate": 54.5,
+      "totalFees": 2.5,
+      "originFee": 1.5,
+      "destinationFee": 1.0,
+      "score": 92,
+      "available": true
+    }
+  ],
+  "summary": {
+    "totalRoutes": 4,
+    "availableRoutes": 2,
+    "bestRate": 54.5,
+    "lowestFee": 2.5
+  }
+}
+```
+
+### Error responses
+
+<ResponseField name="error" type="string">
+  Error message
+</ResponseField>
+
+**400 Bad Request**
+
+```json
+{
+  "error": "Missing or invalid fields: origin, destination, amount"
+}
+```
+
+**405 Method Not Allowed**
+
+```json
+{
+  "error": "Method not allowed"
+}
+```
+
+**500 Internal Server Error**
+
+```json
+{
+  "error": "Database connection failed"
+}
+```
+
+## Implementation notes
+
+- Routes are scored based on multiple factors: total cost, exchange rate, anchor reliability
+- Only operational anchors (with valid SEP-10 and SEP-24 endpoints) are marked as `available: true`
+- Exchange rates are fetched from external FX services or calculated from anchor fees
+- Fees include both fixed amounts and percentage-based charges
+- Results are cached for performance

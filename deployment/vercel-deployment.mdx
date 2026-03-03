@@ -1,0 +1,321 @@
+---
+title: Vercel deployment
+description: Deploy PayOnProof to Vercel for production hosting
+---
+
+This guide walks you through deploying both PayOnProof services to Vercel.
+
+## Architecture
+
+PayOnProof uses a monorepo structure with two separate Vercel projects:
+
+- **API Service** (`services/api`) - Vercel serverless functions
+- **Web Service** (`services/web`) - Next.js application
+
+Each service is deployed as an independent Vercel project with its own domain and environment variables.
+
+## Prerequisites
+
+- A [Vercel account](https://vercel.com/signup)
+- Vercel CLI installed: `npm i -g vercel`
+- Git repository hosted on GitHub, GitLab, or Bitbucket
+- Completed [database setup](/deployment/database-setup)
+- Production environment variables prepared
+
+## Deploy API service
+
+<Steps>
+  <Step title="Create Vercel project for API">
+    1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
+    2. Click **Add New** → **Project**
+    3. Import your PayOnProof repository
+    4. Configure project settings:
+       - **Project Name**: `payonproof-api` (or your preferred name)
+       - **Framework Preset**: Other
+       - **Root Directory**: `services/api`
+       - **Build Command**: Leave empty (Vercel auto-detects serverless functions)
+       - **Output Directory**: `.` (default)
+  </Step>
+
+  <Step title="Configure environment variables">
+    Add all required environment variables from [Environment variables](/deployment/environment-variables).
+    
+    In your project settings → **Environment Variables**, add:
+
+    **Required:**
+    - `POP_ENV` = `production`
+    - `STELLAR_HORIZON_URL` = `https://horizon.stellar.org`
+    - `STELLAR_NETWORK_PASSPHRASE` = `Public Global Stellar Network ; September 2015`
+    - `SUPABASE_URL` = Your Supabase project URL
+    - `SUPABASE_SERVICE_ROLE_KEY` = Your service role key
+    - `WEB_ORIGIN` = Your web app URL (e.g., `https://app.yourdomain.com`)
+    - `CORS_ALLOWED_ORIGINS` = Same as WEB_ORIGIN
+    
+    **Security (required for production):**
+    - `EXECUTION_STATE_SECRET` = Strong random string (32+ chars)
+    - `ANCHOR_CALLBACK_SECRET` = Strong random string (32+ chars)
+    - `CRON_SECRET` = Strong random string (32+ chars)
+    
+    **Optional:**
+    - `STELLAR_ANCHOR_DIRECTORY_URL` = URL to anchor export JSON
+    - `SEP10_CLIENT_DOMAIN` = Your app domain
+    - `MAX_COMPARE_ROUTES` = `12`
+
+    <Note>
+      You can set these for all environments (Production, Preview, Development) or configure them separately.
+    </Note>
+  </Step>
+
+  <Step title="Deploy API service">
+    Click **Deploy**. Vercel will:
+    
+    1. Build your serverless functions
+    2. Deploy to a production URL
+    3. Set up automatic deployments for future commits
+    
+    Your API will be available at: `https://your-project.vercel.app`
+  </Step>
+
+  <Step title="Configure custom domain (optional)">
+    1. Go to project **Settings** → **Domains**
+    2. Add your custom domain (e.g., `api.yourdomain.com`)
+    3. Follow DNS configuration instructions
+    4. Update `WEB_ORIGIN` and related environment variables if needed
+  </Step>
+</Steps>
+
+## Deploy web service
+
+<Steps>
+  <Step title="Create Vercel project for Web">
+    1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
+    2. Click **Add New** → **Project**
+    3. Import the same PayOnProof repository
+    4. Configure project settings:
+       - **Project Name**: `payonproof-web` (or your preferred name)
+       - **Framework Preset**: Next.js
+       - **Root Directory**: `services/web`
+       - **Build Command**: `npm run build` (auto-detected)
+       - **Output Directory**: `.next` (auto-detected)
+  </Step>
+
+  <Step title="Configure environment variables">
+    Add frontend environment variables:
+    
+    - `NEXT_PUBLIC_POP_ENV` = `production`
+    - `NEXT_PUBLIC_API_BASE_URL` = Your API URL (e.g., `https://api.yourdomain.com`)
+    - `NEXT_PUBLIC_APP_URL` = Your web app URL (e.g., `https://app.yourdomain.com`)
+    
+    <Warning>
+      Make sure `NEXT_PUBLIC_API_BASE_URL` points to your deployed API service URL.
+    </Warning>
+  </Step>
+
+  <Step title="Deploy web service">
+    Click **Deploy**. Vercel will:
+    
+    1. Build your Next.js application
+    2. Deploy to a production URL
+    3. Set up automatic deployments
+    
+    Your web app will be available at: `https://your-project.vercel.app`
+  </Step>
+
+  <Step title="Configure custom domain (optional)">
+    1. Go to project **Settings** → **Domains**
+    2. Add your custom domain (e.g., `app.yourdomain.com`)
+    3. Follow DNS configuration instructions
+    4. Update `NEXT_PUBLIC_APP_URL` environment variable
+  </Step>
+</Steps>
+
+## Vercel configuration files
+
+### API service configuration
+
+The API service includes a `vercel.json` configuration file:
+
+```json services/api/vercel.json
+{
+  "framework": null,
+  "outputDirectory": ".",
+  "crons": [
+    {
+      "path": "/api/anchors/ops",
+      "schedule": "0 0 * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "https://payonproof.vercel.app" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
+      ]
+    }
+  ]
+}
+```
+
+<Note>
+  Update the `Access-Control-Allow-Origin` header to match your production web URL.
+</Note>
+
+### Cron jobs
+
+The API service includes a cron job configuration for anchor catalog synchronization:
+
+- **Path**: `/api/anchors/ops`
+- **Schedule**: Daily at midnight UTC (`0 0 * * *`)
+
+This automatically refreshes anchor capabilities and operational status. See [Anchor catalog sync](/deployment/anchor-catalog-sync) for details.
+
+## Deployment workflow
+
+### Automatic deployments
+
+Vercel automatically deploys:
+
+- **Production**: Commits to your main/master branch
+- **Preview**: Commits to other branches and pull requests
+
+Each deployment gets a unique URL for testing.
+
+### Manual deployments
+
+Deploy manually using the Vercel CLI:
+
+<CodeGroup>
+```bash API service
+cd services/api
+vercel --prod
+```
+
+```bash Web service
+cd services/web
+vercel --prod
+```
+</CodeGroup>
+
+## Environment-specific configurations
+
+### Staging environment
+
+Create a separate Vercel project for staging:
+
+1. Follow the same deployment steps
+2. Use staging environment variables:
+   - `POP_ENV=staging`
+   - `STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org`
+   - Point to a staging Supabase database
+3. Deploy from a `staging` or `develop` branch
+
+### Preview deployments
+
+Preview deployments are created automatically for:
+
+- Pull requests
+- Non-production branches
+
+Configure preview-specific environment variables in project settings.
+
+## Post-deployment verification
+
+<Steps>
+  <Step title="Verify API endpoints">
+    Test your API endpoints:
+    
+    ```bash
+    curl https://api.yourdomain.com/api/anchors/catalog
+    curl https://api.yourdomain.com/api/anchors/countries
+    ```
+  </Step>
+
+  <Step title="Verify web application">
+    1. Visit your web app URL
+    2. Test the send payment flow
+    3. Verify API connectivity
+    4. Check browser console for errors
+  </Step>
+
+  <Step title="Verify cron job">
+    1. Go to API project → **Settings** → **Cron Jobs**
+    2. Verify the anchor sync job is scheduled
+    3. Check **Deployments** → **Functions** for execution logs
+  </Step>
+
+  <Step title="Test CORS configuration">
+    Verify cross-origin requests work between web and API:
+    
+    1. Open browser DevTools
+    2. Check Network tab for API requests
+    3. Verify no CORS errors in console
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Build failures
+
+**TypeScript errors:**
+- Run `npm run typecheck` locally before deploying
+- Fix type errors in your code
+
+**Missing dependencies:**
+- Verify all dependencies are in `package.json`
+- Run `npm install` locally to update `package-lock.json`
+
+### Function timeouts
+
+- Vercel free tier: 10-second timeout
+- Vercel Pro: 60-second timeout
+- Optimize slow operations or upgrade your plan
+
+### Environment variable issues
+
+- Variables are environment-specific (Production/Preview/Development)
+- Redeploy after changing environment variables
+- Check logs for missing variable errors
+
+### CORS errors
+
+- Verify `CORS_ALLOWED_ORIGINS` matches your web app URL
+- Update `vercel.json` CORS headers
+- Ensure no trailing slashes in URLs
+
+### Cron job not running
+
+- Verify cron schedule in `vercel.json`
+- Check function logs in Vercel dashboard
+- Ensure `CRON_SECRET` is set (if required)
+
+## Monitoring and logs
+
+Access deployment logs:
+
+1. Go to Vercel Dashboard → Your Project
+2. Click **Deployments**
+3. Select a deployment
+4. View build logs and runtime logs
+
+For real-time monitoring, see [Monitoring](/deployment/monitoring).
+
+## Security considerations
+
+<Warning>
+  **Production security checklist:**
+  
+  - Set strong random secrets for `EXECUTION_STATE_SECRET`, `ANCHOR_CALLBACK_SECRET`, `CRON_SECRET`
+  - Use mainnet Stellar network (`POP_ENV=production`)
+  - Enable HTTPS only (Vercel handles this automatically)
+  - Verify CORS origins match your production domain
+  - Never commit secrets to version control
+  - Use Vercel environment variables for all sensitive data
+</Warning>
+
+## Next steps
+
+- [Configure anchor catalog sync](/deployment/anchor-catalog-sync)
+- [Set up monitoring](/deployment/monitoring)
+- [Configure environment variables](/deployment/environment-variables)

@@ -1,0 +1,336 @@
+---
+title: Transaction signing
+description: Cryptographic signing of Stellar transactions for authentication and transfers
+---
+
+Transaction signing is fundamental to Stellar operations. PayOnProof uses Stellar SDK's signing capabilities for SEP-10 authentication and other cryptographic operations.
+
+## Overview
+
+Stellar transactions must be signed with private keys to prove authorization. PayOnProof implements secure transaction signing for:
+
+- **SEP-10 authentication**: Challenge transaction signing
+- **Payment transactions**: Future transfer operations
+- **Trustline operations**: Asset trustline establishment
+
+## Keypair management
+
+PayOnProof uses Stellar SDK's `Keypair` class for key operations:
+
+```typescript services/api/lib/stellar/sep10.ts
+import { Keypair, TransactionBuilder, WebAuth } from "@stellar/stellar-sdk";
+
+const keypair = Keypair.fromSecret(input.secretKey.trim());
+const account = input.accountPublicKey?.trim() || keypair.publicKey();
+```
+
+### Key derivation
+
+- **From secret**: `Keypair.fromSecret(secretKey)` creates a keypair from a secret key
+- **Public key**: `keypair.publicKey()` extracts the public key
+- **Secret key**: Private keys are never logged or exposed
+
+<Note>
+Secret keys should always be stored securely and never committed to version control or exposed in logs.
+</Note>
+
+## SEP-10 challenge signing
+
+The primary signing use case is SEP-10 authentication:
+
+```typescript services/api/lib/stellar/sep10.ts
+export async function requestSep10Token(
+  input: Sep10TokenInput
+): Promise<Sep10TokenResult> {
+  // ... fetch challenge transaction
+  
+  const challengeJson = await challengeRes.json() as {
+    transaction?: string;
+    network_passphrase?: string;
+  };
+  
+  const networkPassphrase =
+    challengeJson.network_passphrase || getStellarConfig().networkPassphrase;
+  
+  // Verify challenge before signing
+  const { clientAccountID } = WebAuth.readChallengeTx(
+    challengeJson.transaction,
+    serverSigningKey,
+    networkPassphrase,
+    expectedHomeDomain,
+    expectedWebAuthDomain
+  );
+  
+  if (clientAccountID !== account) {
+    throw new Error("SEP-10 challenge account mismatch");
+  }
+  
+  // Sign the transaction
+  const tx = TransactionBuilder.fromXDR(
+    challengeJson.transaction,
+    networkPassphrase
+  );
+  tx.sign(keypair);
+  const signedTx = tx.toEnvelope().toXDR("base64");
+  
+  // Submit signed transaction
+  // ...
+}
+```
+
+<Info>
+Full implementation at `services/api/lib/stellar/sep10.ts:53`
+</Info>
+
+## Transaction construction
+
+Stellar SDK's `TransactionBuilder` is used to construct and sign transactions:
+
+### From XDR
+
+Reconstructing a transaction from XDR (External Data Representation):
+
+```typescript
+const tx = TransactionBuilder.fromXDR(
+  challengeJson.transaction,
+  networkPassphrase
+);
+```
+
+- **XDR**: Base64-encoded transaction envelope
+- **Network passphrase**: Identifies the Stellar network (mainnet/testnet)
+
+### Signing
+
+Adding a signature to a transaction:
+
+```typescript
+tx.sign(keypair);
+```
+
+This:
+1. Creates an Ed25519 signature of the transaction hash
+2. Adds the signature to the transaction envelope
+3. Associates the signature with the keypair's public key
+
+### Serialization
+
+Converting the signed transaction back to XDR:
+
+```typescript
+const signedTx = tx.toEnvelope().toXDR("base64");
+```
+
+- **toEnvelope()**: Wraps transaction with signatures
+- **toXDR("base64")**: Serializes to base64-encoded string
+
+## Network passphrases
+
+Transactions are network-specific and must use the correct passphrase:
+
+```typescript services/api/lib/stellar.ts
+export function getStellarConfig() {
+  const popEnv = getPopEnv();
+  const defaultPassphrase =
+    popEnv === "production"
+      ? "Public Global Stellar Network ; September 2015"
+      : "Test SDF Network ; September 2015";
+  
+  return {
+    popEnv,
+    horizonUrl: process.env.STELLAR_HORIZON_URL ?? defaultHorizonUrl,
+    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? defaultPassphrase,
+  };
+}
+```
+
+<Tip>
+Always verify you're using the correct network passphrase. Transactions signed for testnet cannot be submitted to mainnet and vice versa.
+</Tip>
+
+### Network identification
+
+- **Mainnet**: `Public Global Stellar Network ; September 2015`
+- **Testnet**: `Test SDF Network ; September 2015`
+- **Custom**: Can be configured via environment variable
+
+## Challenge verification
+
+Before signing, PayOnProof verifies the challenge transaction:
+
+```typescript
+const { clientAccountID } = WebAuth.readChallengeTx(
+  challengeJson.transaction,
+  serverSigningKey,
+  networkPassphrase,
+  expectedHomeDomain,
+  expectedWebAuthDomain
+);
+```
+
+### Verification checks
+
+`WebAuth.readChallengeTx` performs:
+
+1. **Signature validation**: Verifies anchor's signature
+2. **Time bounds**: Ensures transaction hasn't expired
+3. **Sequence number**: Validates sequence is zero (challenge pattern)
+4. **Operations**: Verifies manage data operation format
+5. **Domain matching**: Confirms home domain and web auth domain
+6. **Network**: Ensures correct network passphrase
+
+<Note>
+Never sign a challenge transaction without verification. The Stellar SDK's `WebAuth` module provides secure validation.
+</Note>
+
+## Security considerations
+
+### Private key handling
+
+```typescript
+const keypair = Keypair.fromSecret(input.secretKey.trim());
+```
+
+- Secret keys are trimmed but never logged
+- Keys are used only for signing operations
+- Keys are not stored persistently in the implementation
+
+### Account validation
+
+```typescript
+if (clientAccountID !== account) {
+  throw new Error("SEP-10 challenge account mismatch");
+}
+```
+
+Ensures the challenge is for the expected account before signing.
+
+### Timeout protection
+
+```typescript
+const DEFAULT_TIMEOUT_MS = 8000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+```
+
+Prevents hanging during authentication flows.
+
+## Multi-signature support
+
+While not explicitly shown in the current implementation, Stellar supports multiple signatures:
+
+```typescript
+// Example: Multiple signers (not in current codebase)
+tx.sign(keypair1);
+tx.sign(keypair2);
+const signedTx = tx.toEnvelope().toXDR("base64");
+```
+
+This enables:
+- Multi-signature accounts
+- Co-signed transactions
+- Delegated signing patterns
+
+## Transaction envelope format
+
+The signed transaction envelope includes:
+
+```typescript
+interface TransactionEnvelope {
+  tx: Transaction;           // The transaction
+  signatures: Signature[];   // Array of signatures
+}
+
+interface Signature {
+  hint: Buffer;             // Last 4 bytes of public key
+  signature: Buffer;        // Ed25519 signature (64 bytes)
+}
+```
+
+## Error handling
+
+Comprehensive error handling for signing operations:
+
+```typescript
+if (!challengeJson.transaction) {
+  throw new Error("SEP-10 challenge response missing transaction");
+}
+
+try {
+  const { clientAccountID } = WebAuth.readChallengeTx(...);
+  if (clientAccountID !== account) {
+    throw new Error("SEP-10 challenge account mismatch");
+  }
+} catch (error) {
+  throw new Error(`Challenge verification failed: ${error.message}`);
+}
+```
+
+## Environment configuration
+
+Signing operations depend on proper environment setup:
+
+```typescript
+export type PopEnv = "production" | "staging";
+
+export function getPopEnv(): PopEnv {
+  const explicit = (process.env.POP_ENV ?? "").trim().toLowerCase();
+  if (explicit === "staging") return "staging";
+  if (explicit === "production") return "production";
+  
+  const passphrase = (process.env.STELLAR_NETWORK_PASSPHRASE ?? "").trim();
+  if (passphrase === "Test SDF Network ; September 2015") {
+    return "staging";
+  }
+  
+  const horizon = (process.env.STELLAR_HORIZON_URL ?? "").trim().toLowerCase();
+  if (horizon.includes("horizon-testnet.stellar.org")) {
+    return "staging";
+  }
+  
+  return "production";
+}
+```
+
+<Tip>
+The environment is auto-detected from network passphrase or Horizon URL if `POP_ENV` is not explicitly set.
+</Tip>
+
+## Best practices
+
+1. **Always verify before signing**: Use `WebAuth.readChallengeTx` or equivalent validation
+2. **Use correct network**: Ensure network passphrase matches your target network
+3. **Secure key storage**: Never log or expose secret keys
+4. **Timeout protection**: Set reasonable timeouts for network operations
+5. **Error handling**: Catch and handle signing errors appropriately
+6. **Account matching**: Verify the challenge is for the intended account
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="SEP-10 authentication" icon="shield" href="/stellar/sep10">
+    Complete authentication flow
+  </Card>
+  <Card title="Network configuration" icon="network-wired" href="/stellar/horizon-integration#configuration">
+    Configure Horizon and networks
+  </Card>
+  <Card title="Keypair generation" icon="key" href="/deployment/local-development">
+    Development environment setup
+  </Card>
+  <Card title="Stellar SDK docs" icon="book" href="https://stellar.github.io/js-stellar-sdk/">
+    Official Stellar SDK documentation
+  </Card>
+</CardGroup>

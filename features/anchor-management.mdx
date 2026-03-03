@@ -1,0 +1,552 @@
+---
+title: Anchor management
+description: How PayOnProof discovers, validates, and maintains a catalog of Stellar anchors with real-time capability checking
+---
+
+PayOnProof maintains a dynamic catalog of Stellar anchors that support cross-border payments. This catalog is automatically synced and validated to ensure only operational anchors are used for routing.
+
+## Anchor catalog architecture
+
+The anchor catalog is stored in Supabase with the following schema:
+
+```sql services/api/sql/001_anchors_catalog.sql
+CREATE TABLE anchors_catalog (
+  id TEXT PRIMARY KEY,                    -- {domain}:{type}:{country}:{currency}
+  name TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  country TEXT NOT NULL,                  -- ISO 3166-1 alpha-2 code
+  currency TEXT NOT NULL,                 -- Asset code (USDC, XLM, MXN, etc.)
+  type TEXT NOT NULL,                     -- 'on-ramp' or 'off-ramp'
+  active BOOLEAN DEFAULT true,
+  
+  -- SEP capabilities (validated via stellar.toml)
+  sep24 BOOLEAN DEFAULT false,
+  sep6 BOOLEAN DEFAULT false,
+  sep31 BOOLEAN DEFAULT false,
+  sep10 BOOLEAN DEFAULT false,
+  operational BOOLEAN DEFAULT false,
+  
+  -- Fee metadata (from SEP-24/SEP-6 /info endpoints)
+  fee_fixed DECIMAL,
+  fee_percent DECIMAL,
+  fee_source TEXT,                        -- 'sep24' | 'sep6' | 'default'
+  
+  -- Endpoint URLs (from stellar.toml)
+  transfer_server_sep24 TEXT,
+  transfer_server_sep6 TEXT,
+  web_auth_endpoint TEXT,
+  direct_payment_server TEXT,
+  kyc_server TEXT,
+  
+  -- Metadata
+  diagnostics TEXT[],
+  last_checked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_anchors_active_country ON anchors_catalog(active, country);
+CREATE INDEX idx_anchors_active_type ON anchors_catalog(active, type);
+CREATE INDEX idx_anchors_domain ON anchors_catalog(domain);
+```
+
+<Info>
+The `id` field uses a composite format to ensure uniqueness across anchor/country/currency combinations.
+
+Example: `moneygram.com:on-ramp:US:USDC`
+</Info>
+
+## Anchor discovery modes
+
+PayOnProof supports three discovery modes:
+
+### 1. Horizon discovery (recommended)
+
+Queries Stellar Horizon to find all asset issuers, then validates each issuer's `home_domain` field:
+
+```typescript
+const response = await fetch(
+  `${horizonUrl}/assets?limit=200&order=desc`
+);
+const { _embedded: { records } } = await response.json();
+
+for (const asset of records) {
+  if (!asset.home_domain) continue;
+  
+  // Validate anchor via SEP-1 (stellar.toml)
+  const anchor = await discoverAnchorFromDomain({
+    domain: asset.home_domain
+  });
+  
+  // Check SEP-24/SEP-6 support
+  const capabilities = await resolveAnchorCapabilities({
+    domain: asset.home_domain,
+    assetCode: asset.asset_code
+  });
+}
+```
+
+<Tip>
+Horizon discovery finds anchors automatically without manual curation. It's the most reliable source for production.
+</Tip>
+
+### 2. Directory import
+
+Imports anchors from a JSON export (e.g., `https://anchors.stellar.org/`):
+
+```bash
+POST /api/anchors/directory/import
+Content-Type: application/json
+
+{
+  "downloadUrl": "https://raw.githubusercontent.com/.../anchors-export.json",
+  "dryRun": false
+}
+```
+
+### 3. Manual seed file
+
+Use a curated JSON file with known anchors:
+
+```json scripts/anchor-seeds.example.json
+{
+  "anchors": [
+    {
+      "name": "MoneyGram",
+      "domain": "stellar.moneygram.com",
+      "countries": ["US", "MX", "PH"],
+      "currencies": ["USDC", "MXN", "PHP"],
+      "type": "on-ramp"
+    }
+  ]
+}
+```
+
+```bash
+npm run anchors:seed:import -- --file ./anchor-seeds.json --apply
+```
+
+## Capability validation
+
+For every anchor, PayOnProof validates SEP support via stellar.toml and `/info` endpoints:
+
+### SEP-1 discovery
+
+```typescript services/api/lib/stellar/sep1.ts
+export async function discoverAnchorFromDomain(input: { domain: string }) {
+  const tomlUrl = `https://${input.domain}/.well-known/stellar.toml`;
+  const response = await fetch(tomlUrl);
+  
+  if (!response.ok) {
+    throw new Error(`stellar.toml not found at ${tomlUrl} (${response.status})`);
+  }
+  
+  const tomlText = await response.text();
+  const parsed = TOML.parse(tomlText);
+  
+  return {
+    domain: input.domain,
+    webAuthEndpoint: parsed.WEB_AUTH_ENDPOINT,
+    transferServerSep24: parsed.TRANSFER_SERVER_0024 || parsed.TRANSFER_SERVER,
+    transferServerSep6: parsed.TRANSFER_SERVER_SEP0006 || parsed.TRANSFER_SERVER,
+    directPaymentServer: parsed.DIRECT_PAYMENT_SERVER,
+    kycServer: parsed.KYC_SERVER,
+    signingKey: parsed.SIGNING_KEY
+  };
+}
+```
+
+<Note>
+If an anchor's `stellar.toml` returns HTTP 404 three times consecutively, the anchor is automatically disabled (`active = false`) to prevent routing failures.
+</Note>
+
+### SEP-24 info validation
+
+```typescript services/api/lib/stellar/sep24.ts
+export async function fetchSep24Info(input: {
+  transferServerSep24: string;
+}) {
+  const response = await fetch(`${input.transferServerSep24}/info`);
+  const info = await response.json();
+  
+  // Extract fee information from deposit/withdraw sections
+  const fees = extractFeeFromInfo(info, assetCode);
+  
+  return { info, fees };
+}
+```
+
+### Capability resolution
+
+```typescript services/api/lib/stellar/capabilities.ts
+export async function resolveAnchorCapabilities(input: {
+  domain: string;
+  assetCode: string;
+}): Promise<ResolvedAnchorCapabilities> {
+  const diagnostics: string[] = [];
+  
+  // Fetch stellar.toml
+  const sep1 = await discoverAnchorFromDomain({ domain: input.domain });
+  
+  // Check SEP support
+  const sep = {
+    sep24: Boolean(sep1.transferServerSep24),
+    sep6: Boolean(sep1.transferServerSep6),
+    sep31: Boolean(sep1.directPaymentServer),
+    sep10: Boolean(sep1.webAuthEndpoint)
+  };
+  
+  // Fetch fee data from SEP-24 /info
+  let fees = { source: "default" };
+  if (sep1.transferServerSep24) {
+    const r = await fetchSep24Info({ transferServerSep24: sep1.transferServerSep24 });
+    const extracted = extractFeeFromInfo(r.info, input.assetCode);
+    if (extracted?.fixed || extracted?.percent) {
+      fees = { ...extracted, source: "sep24" };
+    }
+  }
+  
+  // Determine operational status
+  const operational = Boolean(
+    sep.sep10 && sep.sep24 && sep1.webAuthEndpoint && sep1.transferServerSep24
+  );
+  
+  return { domain: sep1.domain, sep, endpoints: sep1, fees, diagnostics, operational };
+}
+```
+
+<Info>
+An anchor is marked `operational: true` only if it supports:
+- SEP-10 authentication (`WEB_AUTH_ENDPOINT`)
+- SEP-24 interactive flows (`TRANSFER_SERVER_0024`)
+- Valid `/info` endpoint for the requested asset
+</Info>
+
+## Automatic sync (cron)
+
+PayOnProof runs an automatic sync every 15 minutes via Vercel Cron:
+
+```json services/api/vercel.json
+{
+  "crons": [
+    {
+      "path": "/api/cron/anchors-sync",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
+```
+
+### Cron endpoint behavior
+
+```typescript services/api/api/cron/anchors-sync.ts
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Verify cron secret
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.query.secret !== secret) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  
+  // Discover anchors from Horizon
+  const mode = (req.query.mode as string) || "horizon";
+  const anchors = await discoverAnchors({ mode });
+  
+  // Upsert into catalog
+  const upserted = await upsertAnchorsCatalog(anchors);
+  
+  // Refresh capabilities for active anchors
+  const refreshLimit = Number(req.query.refreshLimit) || 100;
+  const active = await listActiveAnchors();
+  const toRefresh = active.slice(0, refreshLimit);
+  
+  for (const anchor of toRefresh) {
+    const capabilities = await resolveAnchorCapabilities({
+      domain: anchor.domain,
+      assetCode: anchor.currency
+    });
+    
+    await updateAnchorCapabilities({
+      id: anchor.id,
+      sep24: capabilities.sep.sep24,
+      sep6: capabilities.sep.sep6,
+      sep31: capabilities.sep.sep31,
+      sep10: capabilities.sep.sep10,
+      operational: capabilities.operational,
+      diagnostics: capabilities.diagnostics,
+      lastCheckedAt: new Date().toISOString()
+    });
+  }
+  
+  return res.status(200).json({ upserted, refreshed: toRefresh.length });
+}
+```
+
+<Tip>
+Run the cron manually to test:
+
+```bash
+curl "http://localhost:3001/api/cron/anchors-sync?secret=YOUR_SECRET"
+```
+</Tip>
+
+## Anchor filtering
+
+PayOnProof filters anchors based on environment configuration:
+
+### Allowed assets
+
+```bash .env
+ANCHOR_ALLOWED_ASSETS=USDC,XLM
+```
+
+Only anchors supporting USDC or XLM will be included in routes.
+
+<Info>
+Set `ANCHOR_ALLOWED_ASSETS=*` to allow all assets.
+</Info>
+
+### Allowed domains
+
+```bash .env
+ANCHOR_ALLOWED_DOMAINS=stellar.moneygram.com,clpx.finance
+```
+
+Only anchors with these domains will be used for routing.
+
+### Domain-country overrides
+
+```bash .env
+ANCHOR_DOMAIN_COUNTRY_OVERRIDES=clpx.finance:CL,ntokens.com:BR
+```
+
+Manually map domains to country codes if auto-detection fails.
+
+## Repository functions
+
+The `anchors-catalog.ts` repository provides these core functions:
+
+```typescript services/api/lib/repositories/anchors-catalog.ts
+// Get anchors for a specific corridor
+export async function getAnchorsForCorridor(input: {
+  origin: string;
+  destination: string;
+}): Promise<AnchorCatalogEntry[]> {
+  const { data } = await supabase
+    .from("anchors_catalog")
+    .select("*")
+    .eq("active", true)
+    .in("country", [input.origin, input.destination]);
+  
+  return filterAnchors(data.map(mapCatalogRow));
+}
+
+// List all active anchors
+export async function listActiveAnchors(): Promise<AnchorCatalogEntry[]> {
+  const { data } = await supabase
+    .from("anchors_catalog")
+    .select("*")
+    .eq("active", true);
+  
+  return filterAnchors(data.map(mapCatalogRow));
+}
+
+// Update anchor capabilities after validation
+export async function updateAnchorCapabilities(
+  input: CapabilityUpdateInput
+): Promise<void> {
+  await supabase
+    .from("anchors_catalog")
+    .update({
+      sep24: input.sep24,
+      operational: input.operational,
+      diagnostics: input.diagnostics,
+      last_checked_at: input.lastCheckedAt
+    })
+    .eq("id", input.id);
+}
+
+// Disable an anchor
+export async function setAnchorActive(input: {
+  id: string;
+  active: boolean;
+}): Promise<void> {
+  await supabase
+    .from("anchors_catalog")
+    .update({ active: input.active })
+    .eq("id", input.id);
+}
+```
+
+## Local fallback mode
+
+If Supabase is unreachable, PayOnProof falls back to a local JSON file:
+
+```typescript
+function loadLocalFallbackAnchors(): AnchorCatalogEntry[] {
+  const filePath = path.join(process.cwd(), "data", "anchors-export.json");
+  if (!existsSync(filePath)) return [];
+  
+  const raw = readFileSync(filePath, "utf-8");
+  const parsed = JSON.parse(raw) as LocalAnchorExportFile;
+  
+  return parsed.anchors.map(anchor => ({
+    id: `${anchor.domain}:${anchor.type}:${anchor.country}:${anchor.currency}`,
+    name: anchor.name,
+    domain: anchor.domain,
+    country: anchor.country,
+    currency: anchor.currency,
+    type: anchor.type,
+    capabilities: { /* defaults */ }
+  }));
+}
+```
+
+<Warning>
+Local fallback anchors have `operational: false` by default. They won't be used for routing until capabilities are validated.
+</Warning>
+
+## Anchor hygiene (auto-disable)
+
+PayOnProof tracks anchor failures and auto-disables unreliable anchors:
+
+```typescript
+// Track SEP-1 404 failures
+let sep1_404_count = 0;
+const threshold = Number(process.env.ANCHOR_SEP1_404_DISABLE_THRESHOLD) || 3;
+
+try {
+  await discoverAnchorFromDomain({ domain: anchor.domain });
+  sep1_404_count = 0;  // Reset on success
+} catch (error) {
+  if (error.message.includes("404")) {
+    sep1_404_count++;
+    if (sep1_404_count >= threshold) {
+      await setAnchorActive({ id: anchor.id, active: false });
+      console.warn(`Disabled anchor ${anchor.id} after ${threshold} consecutive 404s`);
+    }
+  }
+}
+```
+
+<Info>
+Set `ANCHOR_SEP1_404_DISABLE_THRESHOLD=5` to tolerate more failures before auto-disabling.
+</Info>
+
+## Real-time diagnostics
+
+Every capability check stores diagnostic messages:
+
+```typescript
+const diagnostics: string[] = [];
+
+if (!sep1.transferServerSep24) {
+  diagnostics.push("SEP-24 endpoint missing in stellar.toml");
+}
+
+if (!isSep24AssetSupported(sep24Info, assetCode, "origin")) {
+  diagnostics.push(`SEP-24 /info does not support asset ${assetCode} for deposit`);
+}
+
+await updateAnchorCapabilities({
+  id: anchor.id,
+  diagnostics,
+  lastCheckedAt: new Date().toISOString()
+});
+```
+
+Diagnostics are returned in the `/api/compare-routes` response:
+
+```json
+{
+  "meta": {
+    "anchorDiagnostics": [
+      {
+        "anchorId": "example.com:on-ramp:US:USDC",
+        "operational": false,
+        "diagnostics": [
+          "SEP-24 endpoint missing in stellar.toml",
+          "SEP-10 endpoint unreachable (timeout after 5s)"
+        ]
+      }
+    ]
+  }
+}
+```
+
+<Tip>
+Use diagnostics to debug why certain anchors aren't appearing in route results.
+</Tip>
+
+## Anchor country inference
+
+PayOnProof auto-detects anchor countries from domains:
+
+```typescript
+function inferCountryFromDomain(domain: string): string {
+  // Check manual overrides first
+  const overrides = parseDomainCountryOverrides();
+  if (overrides[domain]) return overrides[domain];
+  
+  // Check known mappings
+  if (KNOWN_DOMAIN_COUNTRY[domain]) return KNOWN_DOMAIN_COUNTRY[domain];
+  
+  // Fallback to TLD
+  const tld = domain.split(".").pop()?.toUpperCase();
+  if (tld && /^[A-Z]{2}$/.test(tld)) return tld;
+  
+  return "ZZ";  // Unknown country
+}
+```
+
+**Known domain mappings:**
+
+- `clpx.finance` → `CL` (Chile)
+- `ntokens.com` → `BR` (Brazil)
+- `mykobo.co` → `CO` (Colombia)
+- `stellar.moneygram.com` → inferred via `ANCHOR_DOMAIN_COUNTRY_OVERRIDES`
+
+## Runtime operations
+
+### Query countries with anchors
+
+```bash
+GET /api/anchors/countries
+```
+
+Returns:
+
+```json
+[
+  { "code": "US", "name": "United States", "onRampCount": 3, "offRampCount": 2 },
+  { "code": "MX", "name": "Mexico", "onRampCount": 1, "offRampCount": 2 }
+]
+```
+
+### Inspect catalog
+
+```bash
+GET /api/anchors/catalog?country=US&type=on-ramp&operationalOnly=true
+```
+
+### Refresh capabilities
+
+```bash
+POST /api/anchors/capabilities/refresh
+Content-Type: application/json
+
+{
+  "country": "US",
+  "limit": 50
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Route comparison" href="/features/route-comparison" icon="arrow-left">
+    Learn how anchors are used to build payment routes
+  </Card>
+  <Card title="Payment execution" href="/features/payment-execution" icon="arrow-right">
+    See how anchors handle SEP-10 + SEP-24 flows
+  </Card>
+</CardGroup>

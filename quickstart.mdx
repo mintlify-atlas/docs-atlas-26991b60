@@ -1,80 +1,416 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Send your first cross-border payment with PayOnProof in under 5 minutes
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
+This guide walks you through sending your first international payment using PayOnProof. You'll compare anchor routes, execute a transfer, and receive verifiable proof of payment—all in under 5 minutes.
 
-### Step 1: Set up your local environment
+<Note>
+  This quickstart uses the PayOnProof web interface. For API integration, see the [API Reference](/api/overview).
+</Note>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Prerequisites
 
-### Step 2: Deploy your changes
+Before you begin, you'll need:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+- A Stellar-compatible wallet (Freighter, Albedo, or similar)
+- Test funds on Stellar testnet (or real funds for mainnet)
+- Basic understanding of international payment corridors
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Warning>
+  For production payments, ensure your wallet is funded and you've completed KYC requirements with your chosen anchor.
+</Warning>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+## Step 1: Connect your wallet
 
-### Step 3: Go live
+Navigate to the PayOnProof web app and connect your Stellar wallet.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<Steps>
+  <Step title="Open PayOnProof">
+    Visit [app.payonproof.com](https://app.payonproof.com) (or your deployment URL).
+  </Step>
+  <Step title="Click 'Connect Wallet'">
+    Select your wallet provider from the connection modal.
+  </Step>
+  <Step title="Approve connection">
+    Confirm the connection request in your wallet extension.
+  </Step>
+</Steps>
+
+Your wallet address will appear in the top-right corner once connected.
+
+## Step 2: Enter payment details
+
+On the send money page, enter your payment details:
+
+```jsx
+// The form captures:
+- Origin country (e.g., "United States")
+- Destination country (e.g., "Mexico")
+- Amount (e.g., 1000 USD)
+```
+
+<Note>
+  PayOnProof automatically queries all active anchors in the selected corridor to find available routes.
+</Note>
+
+### Example payment
+
+Let's send $1,000 from the United States to Mexico:
+
+1. **Origin**: United States (US)
+2. **Destination**: Mexico (MX)
+3. **Amount**: 1000
+
+Click **"Compare Routes"** to proceed.
+
+## Step 3: Compare anchor routes
+
+PayOnProof queries multiple Stellar anchors and presents side-by-side route comparisons.
+
+### What you'll see
+
+Each route displays:
+
+- **Anchors**: Origin anchor (on-ramp) → Destination anchor (off-ramp)
+- **Total fee**: Percentage and absolute amount
+- **Fee breakdown**: On-ramp fee + bridge fee (0.2%) + off-ramp fee
+- **Exchange rate**: Live FX rate between currencies
+- **Recipient receives**: Final amount after all fees
+- **Estimated time**: Settlement duration (typically 8-20 minutes)
+- **Escrow**: Whether funds are protected through the journey
+- **Operational status**: Real-time anchor availability
+
+### Route comparison example
+
+```json
+{
+  "routes": [
+    {
+      "id": "route-moneygram-moneygram-1709481234",
+      "originAnchor": {
+        "name": "MoneyGram (US)",
+        "currency": "USD"
+      },
+      "destinationAnchor": {
+        "name": "MoneyGram (MX)",
+        "currency": "MXN"
+      },
+      "feePercentage": 2.1,
+      "feeAmount": 21.00,
+      "exchangeRate": 17.2450,
+      "receivedAmount": 16876.81,
+      "estimatedTime": "8 min",
+      "available": true,
+      "recommended": true
+    }
+  ]
+}
+```
+
+### Sorting options
+
+You can sort routes by:
+
+- **Best** (recommended): Balanced score based on fees, speed, and reliability
+- **Cheapest**: Lowest total fee percentage
+- **Fastest**: Shortest estimated settlement time
+
+<Note>
+  Routes marked with a lightning bolt icon are recommended based on PayOnProof's scoring algorithm.
+</Note>
+
+## Step 4: Execute the transfer
+
+Once you've selected a route, PayOnProof guides you through the multi-phase execution:
+
+### Phase 1: Prepare authentication
+
+PayOnProof prepares SEP-10 authentication challenges for both the origin and destination anchors.
+
+```typescript
+// API call from services/api/api/execute-transfer.ts:960-1074
+POST /api/execute-transfer
+{
+  "phase": "prepare",
+  "route": selectedRoute,
+  "amount": 1000,
+  "senderAccount": "GXXXXXXXXXXXXX..."
+}
+```
+
+**Response:**
+```json
+{
+  "status": "needs_signature",
+  "prepared": {
+    "transactionId": "POP-1709481234-X7Y9Z2",
+    "anchors": [
+      {
+        "role": "origin",
+        "anchorName": "MoneyGram (US)",
+        "challengeXdr": "AAAA...",
+        "webAuthEndpoint": "https://..."
+      },
+      {
+        "role": "destination",
+        "anchorName": "MoneyGram (MX)",
+        "challengeXdr": "AAAA...",
+        "webAuthEndpoint": "https://..."
+      }
+    ]
+  }
+}
+```
+
+### Phase 2: Sign challenges
+
+Your wallet signs the SEP-10 authentication challenges for both anchors.
+
+<Warning>
+  You'll need to approve two signature requests in your wallet—one for the origin anchor and one for the destination anchor.
+</Warning>
+
+### Phase 3: Authorize and start interactive flows
+
+PayOnProof exchanges the signed challenges for JWT tokens and initiates SEP-24 interactive flows.
+
+```typescript
+POST /api/execute-transfer
+{
+  "phase": "authorize",
+  "prepared": { /* from phase 1 */ },
+  "signatures": {
+    "origin": "signed_challenge_xdr",
+    "destination": "signed_challenge_xdr"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "status": "processing",
+  "transaction": {
+    "id": "POP-1709481234-X7Y9Z2",
+    "statusRef": "encrypted_status_handle",
+    "anchorFlows": {
+      "originDeposit": {
+        "url": "https://anchor.example/interactive/deposit?token=..."
+      },
+      "destinationWithdraw": {
+        "url": "https://anchor.example/interactive/withdraw?token=..."
+      }
+    }
+  }
+}
+```
+
+### Phase 4: Complete anchor KYC/transfer
+
+PayOnProof opens interactive windows for you to complete:
+
+1. **Origin anchor deposit**: Fund your transfer at the origin anchor
+2. **Destination anchor withdraw**: Specify recipient details at the destination anchor
+
+<Note>
+  Each anchor handles its own KYC requirements. You may need to provide identification, proof of address, or other compliance documentation.
+</Note>
+
+### Phase 5: Monitor status
+
+PayOnProof automatically polls transaction status:
+
+```typescript
+POST /api/execute-transfer
+{
+  "phase": "status",
+  "transactionId": "POP-1709481234-X7Y9Z2",
+  "statusRef": "encrypted_status_handle"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "stellarTxHash": "a1b2c3d4e5f6...",
+  "completed": true,
+  "anchors": [
+    {
+      "role": "origin",
+      "status": "completed",
+      "stellarTxHash": "a1b2c3d4e5f6..."
+    },
+    {
+      "role": "destination",
+      "status": "completed"
+    }
+  ]
+}
+```
+
+## Step 5: View proof of payment
+
+Once the transfer completes, PayOnProof generates a verifiable proof of payment.
+
+### Proof contents
+
+```json
+{
+  "transactionId": "POP-1709481234-X7Y9Z2",
+  "stellarTxHash": "a1b2c3d4e5f6...",
+  "amount": 1000,
+  "originCurrency": "USD",
+  "destinationCurrency": "MXN",
+  "receivedAmount": 16876.81,
+  "feeAmount": 21.00,
+  "route": {
+    "originAnchor": "MoneyGram (US)",
+    "destinationAnchor": "MoneyGram (MX)"
+  },
+  "timestamp": "2026-03-03T15:10:34.000Z",
+  "status": "completed",
+  "verificationUrl": "https://stellarchain.io/tx/a1b2c3d4e5f6..."
+}
+```
+
+### Verification
+
+You can verify the payment on-chain:
+
+1. Click the **"View on Stellar Explorer"** link
+2. Confirm the transaction hash matches
+3. Verify the timestamp and amounts
+4. Share the proof with recipients or for accounting
+
+<Note>
+  The proof is cryptographically verifiable and can be independently validated against the Stellar blockchain.
+</Note>
+
+## API integration example
+
+For programmatic access, use the PayOnProof REST API:
+
+```javascript
+// 1. Compare routes
+const routesResponse = await fetch('https://api.payonproof.com/api/compare-routes', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    origin: 'US',
+    destination: 'MX',
+    amount: 1000
+  })
+});
+const { routes } = await routesResponse.json();
+
+// 2. Select best route
+const selectedRoute = routes.find(r => r.recommended);
+
+// 3. Prepare transfer
+const prepareResponse = await fetch('https://api.payonproof.com/api/execute-transfer', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    phase: 'prepare',
+    route: selectedRoute,
+    amount: 1000,
+    senderAccount: 'GYOUR_STELLAR_ADDRESS'
+  })
+});
+const { prepared } = await prepareResponse.json();
+
+// 4. Sign challenges with your wallet
+// (implementation depends on your wallet library)
+
+// 5. Authorize and execute
+const authorizeResponse = await fetch('https://api.payonproof.com/api/execute-transfer', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    phase: 'authorize',
+    prepared,
+    signatures: {
+      origin: signedOriginChallenge,
+      destination: signedDestinationChallenge
+    }
+  })
+});
+const { transaction } = await authorizeResponse.json();
+
+// 6. Poll status until complete
+```
+
+See the [API Reference](/api/overview) for complete endpoint documentation.
+
+## Troubleshooting
+
+### "No routes found"
+
+This means no anchors are currently operational for your selected corridor.
+
+**Solutions:**
+- Try a different country pair
+- Check back later (anchors may be temporarily offline)
+- Verify you're using a supported corridor
+
+### "Selected route is not operational"
+
+The route you selected became unavailable between query and execution.
+
+**Solutions:**
+- Return to route comparison and select a different route
+- Refresh the route list to get updated operational status
+
+### "SEP-10 challenge failed"
+
+Wallet authentication with the anchor failed.
+
+**Solutions:**
+- Ensure your wallet has sufficient XLM for transaction fees
+- Check that you're connected to the correct Stellar network (testnet vs mainnet)
+- Verify your wallet supports SEP-10 authentication
+
+### "Missing SEP10_CLIENT_DOMAIN_SIGNING_SECRET"
+
+This error occurs in self-hosted deployments when client domain signing is required but not configured.
+
+**Solutions:**
+- Set `SEP10_CLIENT_DOMAIN_SIGNING_SECRET` in your API environment variables
+- See [Local development](/deployment/local-development) for configuration details
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card
+    title="Understand the architecture"
+    icon="diagram-project"
+    href="/how-it-works"
+  >
+    Learn how PayOnProof routes payments, aggregates anchors, and generates verifiable proofs.
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api/overview"
+  >
+    Integrate PayOnProof into your application with the REST API.
+  </Card>
+  <Card
+    title="Development setup"
+    icon="laptop-code"
+    href="/deployment/local-development"
+  >
+    Run PayOnProof locally and contribute to the project.
+  </Card>
+  <Card
+    title="Route comparison"
+    icon="sparkles"
+    href="/features/route-comparison"
+  >
+    Explore route scoring, escrow protection, and proof generation in depth.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

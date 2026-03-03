@@ -1,0 +1,345 @@
+---
+title: Horizon API integration
+description: Querying the Stellar network and discovering anchors through Horizon
+---
+
+PayOnProof integrates with the Stellar Horizon API to query network data, discover anchors, and monitor blockchain activity. Horizon is the REST API interface to the Stellar network.
+
+## Configuration
+
+Horizon endpoints are configured based on the deployment environment:
+
+```typescript services/api/lib/stellar.ts
+export function getStellarConfig() {
+  const popEnv = getPopEnv();
+  const defaultHorizonUrl =
+    popEnv === "production"
+      ? "https://horizon.stellar.org"
+      : "https://horizon-testnet.stellar.org";
+  const defaultPassphrase =
+    popEnv === "production"
+      ? "Public Global Stellar Network ; September 2015"
+      : "Test SDF Network ; September 2015";
+  
+  return {
+    popEnv,
+    horizonUrl: process.env.STELLAR_HORIZON_URL ?? defaultHorizonUrl,
+    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? defaultPassphrase,
+  };
+}
+```
+
+<Info>
+See configuration in `services/api/lib/stellar.ts:23`
+</Info>
+
+### Environment variables
+
+- **STELLAR_HORIZON_URL**: Custom Horizon endpoint (optional)
+- **STELLAR_NETWORK_PASSPHRASE**: Network identifier (optional)
+- **POP_ENV**: Environment setting (`production` or `staging`)
+
+<Tip>
+When `POP_ENV` is not set, the system infers the environment from the network passphrase or Horizon URL.
+</Tip>
+
+## Horizon server instance
+
+PayOnProof creates a configured Horizon server instance:
+
+```typescript
+export function getHorizonServer() {
+  const { horizonUrl } = getStellarConfig();
+  return new Horizon.Server(horizonUrl);
+}
+```
+
+This server instance is used throughout the application for all Horizon API calls.
+
+## Ledger queries
+
+The platform can query the latest ledger sequence:
+
+```typescript
+export async function getLatestLedgerSequence() {
+  const server = getHorizonServer();
+  const ledgers = await server.ledgers().order("desc").limit(1).call();
+  const latest = ledgers.records[0];
+  
+  if (!latest) {
+    throw new Error("No ledger records returned by Horizon");
+  }
+  
+  return Number(latest.sequence);
+}
+```
+
+This is useful for transaction submission and monitoring network progress.
+
+## Anchor discovery from Horizon
+
+One of PayOnProof's most powerful features is automatic anchor discovery by scanning Horizon data:
+
+```typescript services/api/lib/stellar/horizon.ts
+export async function discoverAnchorsFromHorizon(input?: {
+  horizonUrl?: string;
+  assetPages?: number;
+  assetsPerPage?: number;
+  issuerLimit?: number;
+  issuerConcurrency?: number;
+  domainConcurrency?: number;
+  timeoutMs?: number;
+}): Promise<{
+  rows: AnchorCatalogImportRow[];
+  stats: {
+    issuersScanned: number;
+    domainsDiscovered: number;
+    domainsWithSep: number;
+  };
+}>
+```
+
+<Info>
+Full implementation at `services/api/lib/stellar/horizon.ts:243`
+</Info>
+
+### Discovery process
+
+The anchor discovery follows a multi-stage pipeline:
+
+1. **Fetch assets**: Query Horizon for recent assets
+2. **Extract issuers**: Collect unique asset issuer accounts
+3. **Get home domains**: Query each issuer's account for their home domain
+4. **Discover capabilities**: Fetch stellar.toml and SEP endpoints
+5. **Extract operations**: Determine supported currencies and countries
+
+### Asset fetching
+
+```typescript
+async function getAssetIssuersFromHorizon(input: {
+  horizonUrl: string;
+  assetPages: number;
+  assetsPerPage: number;
+  timeoutMs: number;
+}): Promise<Set<string>> {
+  const issuers = new Set<string>();
+  let nextUrl =
+    `${normalizeBaseUrl(input.horizonUrl)}/assets?limit=${input.assetsPerPage}&order=desc`;
+  
+  for (let page = 0; page < input.assetPages; page += 1) {
+    const payload = await fetchJsonWithTimeout(nextUrl, input.timeoutMs) as {
+      _embedded?: { records?: HorizonAssetRecord[] };
+      _links?: { next?: { href?: string } };
+    };
+    const records = payload?._embedded?.records ?? [];
+    if (records.length === 0) break;
+    
+    for (const record of records) {
+      if (record.asset_type === "native") continue;
+      if (record.asset_issuer) issuers.add(record.asset_issuer);
+    }
+    
+    const href = payload?._links?.next?.href;
+    if (!href || typeof href !== "string") break;
+    nextUrl = href;
+  }
+  
+  return issuers;
+}
+```
+
+### Home domain resolution
+
+```typescript
+async function getHomeDomainForIssuer(input: {
+  horizonUrl: string;
+  issuer: string;
+  timeoutMs: number;
+}): Promise<string | undefined> {
+  const url = `${normalizeBaseUrl(input.horizonUrl)}/accounts/${input.issuer}`;
+  const payload = await fetchJsonWithTimeout(url, input.timeoutMs) as HorizonAccountRecord;
+  const homeDomain = payload.home_domain?.trim().toLowerCase();
+  return homeDomain || undefined;
+}
+```
+
+<Note>
+Not all issuers set a home domain. Only issuers with configured home domains can be discovered through this method.
+</Note>
+
+## Concurrency control
+
+To avoid overwhelming Horizon or anchor servers, PayOnProof implements concurrency limiting:
+
+```typescript
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const size = Math.max(1, Math.floor(concurrency));
+  
+  async function runOne() {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  }
+  
+  await Promise.all(Array.from({ length: size }, () => runOne()));
+  return results;
+}
+```
+
+Default concurrency settings:
+
+- **Issuer queries**: 20 concurrent requests
+- **Domain discovery**: 8 concurrent requests
+- **Asset pages**: 4 pages of 200 assets each
+
+## Configuration defaults
+
+```typescript
+const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_HORIZON_URL =
+  process.env.STELLAR_HORIZON_URL?.trim() ?? "https://horizon.stellar.org";
+
+const horizonUrl = input?.horizonUrl?.trim() || DEFAULT_HORIZON_URL;
+const assetPages = Math.max(1, Math.min(10, Math.floor(input?.assetPages ?? 4)));
+const assetsPerPage = Math.max(20, Math.min(200, Math.floor(input?.assetsPerPage ?? 200)));
+const issuerLimit = Math.max(10, Math.min(1000, Math.floor(input?.issuerLimit ?? 250)));
+const issuerConcurrency = Math.max(1, Math.min(50, Math.floor(input?.issuerConcurrency ?? 20)));
+const domainConcurrency = Math.max(1, Math.min(30, Math.floor(input?.domainConcurrency ?? 8)));
+const timeoutMs = Math.max(3000, Math.min(20000, Math.floor(input?.timeoutMs ?? DEFAULT_TIMEOUT_MS)));
+```
+
+<Tip>
+All numeric parameters are clamped to safe ranges to prevent excessive load or timeouts.
+</Tip>
+
+## Currency and country extraction
+
+PayOnProof extracts supported currencies and countries from SEP info responses:
+
+```typescript
+function extractTypesAndCurrencies(info: unknown): Array<{
+  type: "on-ramp" | "off-ramp";
+  currency: string;
+  countries: string[];
+}> {
+  if (!info || typeof info !== "object") return [];
+  const root = info as Record<string, unknown>;
+  const deposit = root.deposit as Record<string, unknown> | undefined;
+  const withdraw = root.withdraw as Record<string, unknown> | undefined;
+  
+  const rows: Array<{
+    type: "on-ramp" | "off-ramp";
+    currency: string;
+    countries: string[];
+  }> = [];
+  
+  for (const code of Object.keys(deposit ?? {})) {
+    const assetCode = code.split(":")[0]?.trim().toUpperCase();
+    if (assetCode && /^[A-Z0-9]{2,12}$/.test(assetCode)) {
+      rows.push({
+        type: "on-ramp",
+        currency: assetCode,
+        countries: extractCountryCodesFromAssetConfig(deposit[code]),
+      });
+    }
+  }
+  
+  // Similar for withdraw...
+  
+  return [...dedup.values()];
+}
+```
+
+## Country code derivation
+
+When country codes aren't explicitly provided, they're derived from the domain:
+
+```typescript
+function deriveCountryFromDomain(domain: string): string {
+  const parts = domain.toLowerCase().split(".");
+  const tld = parts[parts.length - 1] ?? "";
+  if (/^[a-z]{2}$/.test(tld)) return tld.toUpperCase();
+  return "ZZ"; // Unknown country
+}
+```
+
+## Anchor catalog format
+
+```typescript
+export interface AnchorCatalogImportRow {
+  id: string;
+  name: string;
+  domain: string;
+  country: string;
+  currency: string;
+  type: "on-ramp" | "off-ramp";
+  active: boolean;
+}
+```
+
+Each discovered anchor generates one or more catalog rows based on supported currencies and countries.
+
+## Discovery statistics
+
+The discovery process returns comprehensive statistics:
+
+```typescript
+return {
+  rows: [...rows.values()],
+  stats: {
+    issuersScanned: issuerList.length,
+    domainsDiscovered: domains.size,
+    domainsWithSep: domainsWithSep,
+  },
+};
+```
+
+## Error handling
+
+Discovery is fault-tolerant and continues even when individual anchors fail:
+
+```typescript
+const domainRows = await mapWithConcurrency(
+  domainList,
+  domainConcurrency,
+  async (domain) => {
+    try {
+      const sep1 = await discoverAnchorFromDomain({ domain, timeoutMs });
+      // ... process anchor
+      return { hasSep: true, rows: out };
+    } catch {
+      return { hasSep: false, rows: [] };
+    }
+  }
+);
+```
+
+<Note>
+Failed anchor discoveries are silently ignored, allowing the process to complete successfully even if some anchors are unreachable.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Asset management" icon="coins" href="/stellar/asset-management">
+    Working with Stellar assets
+  </Card>
+  <Card title="SEP-1 discovery" icon="compass" href="/stellar/sep-overview#sep-1-stellar-toml">
+    Anchor capability discovery
+  </Card>
+  <Card title="Anchor directory" icon="building" href="/stellar/sep-overview#anchor-trust-evaluation">
+    Anchor catalog and trust
+  </Card>
+  <Card title="Network config" icon="gear" href="/deployment/local-development">
+    Environment configuration
+  </Card>
+</CardGroup>

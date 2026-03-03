@@ -1,0 +1,325 @@
+---
+title: Generate proof
+description: Generate cryptographic proof of payment after transaction settlement
+---
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://api.payonproof.com/api/generate-proof \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transactionId": "POP-1709467200-A3F9B2",
+    "stellarTxHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+    "route": "MoneyGram → Philippines Anchor",
+    "originAmount": 100,
+    "originCurrency": "USD",
+    "destinationAmount": 5450,
+    "destinationCurrency": "PHP",
+    "exchangeRate": 54.5,
+    "totalFees": 2.5
+  }'
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.payonproof.com/api/generate-proof', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    transactionId: 'POP-1709467200-A3F9B2',
+    stellarTxHash: '3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889',
+    route: 'MoneyGram → Philippines Anchor',
+    originAmount: 100,
+    originCurrency: 'USD',
+    destinationAmount: 5450,
+    destinationCurrency: 'PHP',
+    exchangeRate: 54.5,
+    totalFees: 2.5
+  })
+});
+const data = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.post(
+  'https://api.payonproof.com/api/generate-proof',
+  json={
+    'transactionId': 'POP-1709467200-A3F9B2',
+    'stellarTxHash': '3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889',
+    'route': 'MoneyGram → Philippines Anchor',
+    'originAmount': 100,
+    'originCurrency': 'USD',
+    'destinationAmount': 5450,
+    'destinationCurrency': 'PHP',
+    'exchangeRate': 54.5,
+    'totalFees': 2.5
+  }
+)
+data = response.json()
+```
+
+</RequestExample>
+
+## POST /api/generate-proof
+
+Generates a cryptographic proof of payment after verifying the transaction exists on the Stellar blockchain via Horizon.
+
+This endpoint:
+1. Verifies the transaction exists on Horizon
+2. Generates a proof payload with transaction metadata
+3. Returns a verifiable proof object
+
+### Request body
+
+<ParamField body="transactionId" type="string" required>
+  PayOnProof transaction ID (e.g., "POP-1709467200-A3F9B2")
+</ParamField>
+
+<ParamField body="stellarTxHash" type="string" required>
+  Stellar transaction hash (64-character hex string)
+</ParamField>
+
+<ParamField body="route" type="string">
+  Human-readable route description (e.g., "MoneyGram → Philippines Anchor")
+</ParamField>
+
+<ParamField body="originAmount" type="number">
+  Amount sent in origin currency
+</ParamField>
+
+<ParamField body="originCurrency" type="string">
+  Origin currency code (e.g., "USD")
+</ParamField>
+
+<ParamField body="destinationAmount" type="number">
+  Amount received in destination currency
+</ParamField>
+
+<ParamField body="destinationCurrency" type="string">
+  Destination currency code (e.g., "PHP")
+</ParamField>
+
+<ParamField body="exchangeRate" type="number">
+  Exchange rate applied (destination/origin)
+</ParamField>
+
+<ParamField body="totalFees" type="number">
+  Total fees charged in origin currency
+</ParamField>
+
+### Response
+
+<ResponseField name="proof" type="object">
+  Proof of payment object
+  
+  <Expandable title="Proof structure">
+    <ResponseField name="id" type="string">
+      Unique proof ID (e.g., "POP-PROOF-1709467200")
+    </ResponseField>
+    
+    <ResponseField name="transactionId" type="string">
+      PayOnProof transaction ID
+    </ResponseField>
+    
+    <ResponseField name="timestamp" type="string">
+      ISO 8601 timestamp when proof was generated
+    </ResponseField>
+    
+    <ResponseField name="sender" type="string">
+      Sender description ("Wallet Holder")
+    </ResponseField>
+    
+    <ResponseField name="receiver" type="string">
+      Receiver description ("Anchor Settlement")
+    </ResponseField>
+    
+    <ResponseField name="originAmount" type="number">
+      Amount sent
+    </ResponseField>
+    
+    <ResponseField name="originCurrency" type="string">
+      Origin currency
+    </ResponseField>
+    
+    <ResponseField name="destinationAmount" type="number">
+      Amount received
+    </ResponseField>
+    
+    <ResponseField name="destinationCurrency" type="string">
+      Destination currency
+    </ResponseField>
+    
+    <ResponseField name="exchangeRate" type="number">
+      Exchange rate
+    </ResponseField>
+    
+    <ResponseField name="totalFees" type="number">
+      Total fees
+    </ResponseField>
+    
+    <ResponseField name="route" type="string">
+      Route description
+    </ResponseField>
+    
+    <ResponseField name="stellarTxHash" type="string">
+      Stellar transaction hash
+    </ResponseField>
+    
+    <ResponseField name="status" type="string">
+      "verified" after Horizon verification
+    </ResponseField>
+    
+    <ResponseField name="verificationUrl" type="string">
+      StellarExpert URL for blockchain verification
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Response example
+
+```json
+{
+  "proof": {
+    "id": "POP-PROOF-1709467200",
+    "transactionId": "POP-1709467200-A3F9B2",
+    "timestamp": "2026-03-03T10:15:00.000Z",
+    "sender": "Wallet Holder",
+    "receiver": "Anchor Settlement",
+    "originAmount": 100,
+    "originCurrency": "USD",
+    "destinationAmount": 5450,
+    "destinationCurrency": "PHP",
+    "exchangeRate": 54.5,
+    "totalFees": 2.5,
+    "route": "MoneyGram → Philippines Anchor",
+    "stellarTxHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+    "status": "verified",
+    "verificationUrl": "https://stellar.expert/explorer/public/tx/3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889"
+  }
+}
+```
+
+### Error responses
+
+**400 Bad Request - Missing field**
+
+```json
+{
+  "error": "Missing field: stellarTxHash"
+}
+```
+
+**405 Method Not Allowed**
+
+```json
+{
+  "error": "Method not allowed"
+}
+```
+
+**502 Bad Gateway - Horizon verification failed**
+
+```json
+{
+  "error": "Transaction not found on Horizon (404): {\"type\":\"https://stellar.org/horizon-errors/not_found\",\"title\":\"Resource Missing\"}"
+}
+```
+
+**502 Bad Gateway - Network error**
+
+```json
+{
+  "error": "Horizon request failed (https://horizon.stellar.org/transactions/...): fetch failed"
+}
+```
+
+## Verification process
+
+The endpoint verifies transactions by:
+
+1. **Querying Horizon**: `GET https://horizon.stellar.org/transactions/{hash}`
+2. **Checking response**: Must return 200 OK
+3. **Generating proof**: Creates proof payload with verified data
+
+### Horizon verification example
+
+```bash
+curl https://horizon.stellar.org/transactions/3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889
+```
+
+If transaction exists:
+```json
+{
+  "id": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+  "successful": true,
+  "ledger": 12345678,
+  ...
+}
+```
+
+## Use cases
+
+### Generate proof after transfer completion
+
+```javascript
+// After status polling shows completed=true
+const statusResponse = await fetch('/api/execute-transfer', {
+  method: 'POST',
+  body: JSON.stringify({
+    phase: 'status',
+    transactionId,
+    statusRef
+  })
+});
+
+const { stellarTxHash, completed } = await statusResponse.json();
+
+if (completed && stellarTxHash) {
+  const proofResponse = await fetch('/api/generate-proof', {
+    method: 'POST',
+    body: JSON.stringify({
+      transactionId,
+      stellarTxHash,
+      originAmount: 100,
+      originCurrency: 'USD',
+      destinationAmount: 5450,
+      destinationCurrency: 'PHP',
+      exchangeRate: 54.5,
+      totalFees: 2.5,
+      route: 'MoneyGram → Philippines Anchor'
+    })
+  });
+  
+  const { proof } = await proofResponse.json();
+  console.log('Proof generated:', proof.id);
+  console.log('Verify at:', proof.verificationUrl);
+}
+```
+
+### Display proof certificate
+
+```javascript
+function ProofCertificate({ proof }) {
+  return (
+    <div className="proof-certificate">
+      <h2>Payment Verified</h2>
+      <p>Proof ID: {proof.id}</p>
+      <p>Amount: {proof.originAmount} {proof.originCurrency} → {proof.destinationAmount} {proof.destinationCurrency}</p>
+      <p>Exchange Rate: {proof.exchangeRate}</p>
+      <p>Fees: {proof.totalFees} {proof.originCurrency}</p>
+      <p>Status: {proof.status}</p>
+      <a href={proof.verificationUrl} target="_blank">Verify on Blockchain</a>
+    </div>
+  );
+}
+```
+
+## Implementation notes
+
+- Proof generation requires successful Horizon verification
+- Transaction hash must be valid 64-character hex string
+- Optional fields default to sensible values (0, "USDC", etc.)
+- Verification URL points to StellarExpert for easy blockchain verification
+- Horizon timeout is 5 seconds (inherited from internal config)

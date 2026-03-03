@@ -1,0 +1,340 @@
+---
+title: Verifying proofs
+description: Learn how to verify, download, and share cryptographic proof of payment on the Stellar blockchain.
+---
+
+Every payment through PayOnProof generates a verifiable proof of payment recorded on the Stellar blockchain. This guide explains how to verify, interpret, and use your proof of payment.
+
+## What is a proof of payment?
+
+A proof of payment is an immutable record on the Stellar blockchain that proves:
+
+- A payment was made from sender to receiver
+- The exact amount sent and received
+- The exchange rate applied
+- The fees charged
+- The timestamp of the transaction
+- The route used (origin and destination anchors)
+
+<Note>
+Unlike traditional payment receipts that can be forged, PayOnProof generates cryptographically verifiable proofs anchored on a public blockchain. Anyone can independently verify the proof using the Stellar transaction hash.
+</Note>
+
+## How proofs are generated
+
+After you complete the anchor flows:
+
+<Steps>
+  <Step title="Anchor processing">
+    Both the origin and destination anchors process your transaction on the Stellar network. This creates on-chain transactions with unique hashes.
+  </Step>
+
+  <Step title="Auto-detection">
+    PayOnProof automatically polls the anchor status APIs every 15 seconds. When both anchors report completion, the system retrieves the Stellar transaction hash.
+  </Step>
+
+  <Step title="Verification">
+    PayOnProof queries the Stellar blockchain using the transaction hash to verify:
+    - The transaction exists and succeeded
+    - The amounts match what was expected
+    - The transaction is immutable and confirmed
+  </Step>
+
+  <Step title="Proof generation">
+    Once verified, PayOnProof generates a structured proof of payment containing all transaction details, anchored by the blockchain transaction hash.
+  </Step>
+</Steps>
+
+## Automatic verification
+
+In most cases, proof verification happens automatically:
+
+1. After completing both anchor flows (deposit and withdrawal), stay on the proof page
+2. You'll see status updates: "Origin: pending | Destination: pending"
+3. PayOnProof polls anchor status every 15 seconds
+4. When the Stellar transaction hash is available, it's automatically filled in
+5. The proof is verified and displayed with a **Payment Verified** banner
+
+The entire auto-verification process typically takes 5-30 minutes depending on anchor processing times.
+
+<Tip>
+You can leave the page open in a background tab while waiting for verification. The polling continues automatically.
+</Tip>
+
+## Manual verification
+
+If automatic verification doesn't work or you have the transaction hash from another source:
+
+<Steps>
+  <Step title="Locate the transaction hash">
+    Find your Stellar transaction hash from:
+    - The anchor's confirmation page after completing flows
+    - Email notifications from the anchor
+    - Your Stellar account transaction history
+    
+    The hash is a long alphanumeric string (64 characters).
+  </Step>
+
+  <Step title="Paste the hash">
+    On the proof page, locate the "Stellar transaction hash" input field and paste your transaction hash.
+  </Step>
+
+  <Step title="Click Verify On-chain">
+    Click the **Verify On-chain** button. PayOnProof will:
+    - Query the Stellar blockchain for this transaction
+    - Validate the transaction succeeded
+    - Extract payment details
+    - Generate the proof of payment
+    
+    <Note>
+    If you see "Verification failed", the hash may be incorrect, or the transaction may not have completed on-chain yet. Wait a few minutes and try again.
+    </Note>
+  </Step>
+
+  <Step title="Review the proof">
+    Once verified, the full proof of payment appears with a green success banner.
+  </Step>
+</Steps>
+
+## Understanding your proof
+
+The proof of payment card displays comprehensive transaction details:
+
+### Header section
+
+- **Proof of Payment**: Title with PayOnProof branding
+- **Verified badge**: Green checkmark indicating blockchain verification
+
+### Transfer amount
+
+Shows the before/after amounts:
+
+- **Left side**: Amount sent in origin currency
+- **Arrow**: Directional indicator
+- **Right side**: Amount received in destination currency (highlighted in primary color)
+
+### Transaction details
+
+Key information fields:
+
+- **Transaction ID**: Unique identifier for this PayOnProof transaction
+- **Date & Time**: When the transfer was completed (with timezone)
+- **Route**: Anchor names (e.g., "MoneyGram Access USD > MoneyGram Access EUR")
+- **Exchange Rate**: Conversion rate applied (e.g., "1 USD = 0.92 EUR")
+- **Total Fees**: Sum of all fees in origin currency
+
+<Tip>
+Click the copy icon next to the Transaction ID to quickly copy it to your clipboard for reference.
+</Tip>
+
+### Blockchain verification section
+
+The most important part of the proof:
+
+- **Stellar TX Hash**: The immutable blockchain transaction identifier
+- **Copy button**: Quickly copy the hash
+- **View on Stellar Explorer link**: Opens the transaction in Stellar Expert, an independent blockchain explorer
+
+## Verifying independently
+
+Anyone can verify your proof independently using the blockchain:
+
+<Steps>
+  <Step title="Share the Stellar TX Hash">
+    Provide the Stellar transaction hash from your proof to anyone who needs to verify the payment.
+  </Step>
+
+  <Step title="Open Stellar Explorer">
+    Go to [stellar.expert/explorer/public](https://stellar.expert/explorer/public) (or click the link in your proof).
+  </Step>
+
+  <Step title="Search for the transaction">
+    Paste the hash into the search bar and press Enter.
+  </Step>
+
+  <Step title="Review blockchain data">
+    The explorer shows:
+    - Transaction status (successful/failed)
+    - Timestamp
+    - Source and destination accounts
+    - Asset transfers
+    - All operations and effects
+    
+    This data is immutable and cannot be altered—it provides independent proof the payment occurred.
+  </Step>
+</Steps>
+
+<Note>
+The Stellar blockchain is public and permanent. Anyone with the transaction hash can verify the payment occurred, but they cannot reverse or modify it.
+</Note>
+
+## Downloading your proof
+
+To save a permanent record of your proof:
+
+1. Click the **Download** button below the proof card
+2. A text file named `POP-{transaction-id}.txt` is downloaded
+3. The file contains:
+   - Full transaction details
+   - Sender and receiver information
+   - Amount, fees, and exchange rate
+   - Stellar transaction hash
+   - Link to Stellar Explorer for verification
+
+Example downloaded proof:
+
+```
+PROOF OF PAYMENT - POP
+========================
+Transaction ID: tx_abc123xyz
+Date: 3/3/2026, 10:30:00 AM
+Status: VERIFIED
+
+TRANSFER DETAILS
+-----------------
+Sender: GXXX...XXXX
+Receiver: GYYY...YYYY
+Origin: 500 USD
+Received: 460 EUR
+Exchange Rate: 1 USD = 0.92 EUR
+Total Fees: 5.00 USD
+Route: MoneyGram Access USD > MoneyGram Access EUR
+
+BLOCKCHAIN VERIFICATION
+------------------------
+Stellar TX Hash: abc123...xyz789
+Network: Stellar Public
+
+This proof of payment was generated by POP (Pay On Proof).
+Verify on Stellar: https://stellar.expert/explorer/public/tx/abc123...xyz789
+```
+
+<Tip>
+Save downloaded proofs for your records. They can be used for:
+- Accounting and tax purposes
+- Dispute resolution
+- Proof of remittance for recipients
+- Audit trails
+</Tip>
+
+## Sharing your proof
+
+You can share proof of payment in multiple ways:
+
+### Share button
+
+Click the **Share** button to:
+
+- **On mobile**: Open the native share dialog to share via messaging apps, email, etc.
+- **On desktop**: Copy a summary to your clipboard that you can paste anywhere
+
+The share text includes:
+
+- Transaction ID
+- Amounts (sent and received)
+- Stellar transaction hash
+
+### Copy individual fields
+
+Click the copy icons next to:
+
+- **Transaction ID**: For support inquiries
+- **Stellar TX Hash**: For independent verification
+
+Copied text is indicated by a green checkmark for 2 seconds.
+
+### Share the download file
+
+Email or send the downloaded text file as an official receipt to:
+
+- Recipients who need proof of payment
+- Accountants or tax advisors
+- Compliance or audit teams
+
+<Warning>
+**Privacy consideration**
+
+The Stellar transaction hash reveals your public Stellar address and transaction details on a public blockchain. Only share proofs with trusted parties.
+
+Never share your wallet seed phrase or private keys—only share the proof of payment or transaction hash.
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="Verification failed error">
+If you see "Verification failed":
+
+- **Check the hash**: Ensure you pasted the complete Stellar transaction hash (64 characters)
+- **Wait for confirmation**: The transaction may not be confirmed on-chain yet—wait 2-5 minutes and retry
+- **Check anchor status**: If anchors show "pending", the transaction hasn't been submitted to Stellar yet
+- **Network issues**: Temporary connectivity issues can cause failures—retry after a moment
+
+If the error persists after 30 minutes, there may be an issue with the anchor processing.
+</Accordion>
+
+<Accordion title="Auto-verification stuck">
+If auto-verification shows "Auto-checking anchor status..." for more than 30 minutes:
+
+- **Check anchor links**: Return to the anchor flows and verify both deposit and withdrawal are complete
+- **Manual verification**: If you have the transaction hash from the anchor, use manual verification instead
+- **Contact support**: If both anchors show complete but no hash appears, contact PayOnProof support
+
+The polling may stop if there's an error. Look for error messages below the status text.
+</Accordion>
+
+<Accordion title="Transaction not found on Stellar Explorer">
+If clicking "View on Stellar Explorer" shows "Transaction not found":
+
+- The transaction hash may be incorrect
+- You may be looking at the wrong network (Testnet vs. Mainnet)
+- The transaction may have failed on-chain (anchors can report success before on-chain confirmation)
+
+Double-check the hash and ensure you're using the correct Stellar Explorer URL:
+- **Mainnet**: https://stellar.expert/explorer/public
+- **Testnet**: https://stellar.expert/explorer/testnet
+</Accordion>
+
+<Accordion title="Wrong amounts in proof">
+If the proof shows incorrect amounts:
+
+- This should not happen if verification succeeded—the amounts are pulled from the actual blockchain transaction
+- Verify the transaction on Stellar Explorer independently
+- Compare with your anchor confirmation emails
+- Contact PayOnProof support with the transaction ID and Stellar hash
+
+Note: The amounts shown are after fees. Check the fee breakdown to understand the difference between amount sent and amount received.
+</Accordion>
+
+## Proof validity
+
+### How long is a proof valid?
+
+**Forever.** Once a transaction is recorded on the Stellar blockchain:
+
+- It cannot be deleted or modified
+- It remains publicly verifiable indefinitely
+- The proof of payment can be regenerated at any time using the transaction hash
+
+### Can a proof be faked?
+
+No. The proof's validity is anchored to the Stellar blockchain:
+
+- The transaction hash links to an immutable blockchain record
+- Anyone can independently verify the transaction on Stellar Explorer
+- Altering any detail would invalidate the hash
+- The blockchain timestamp proves when the transaction occurred
+
+<Note>
+This is the core value of PayOnProof: cryptographic certainty that a payment occurred, backed by a decentralized blockchain that no single party controls.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sending payments" href="/guides/sending-payments">
+    Learn how to send your next cross-border payment
+  </Card>
+  <Card title="Understanding fees" href="/guides/understanding-fees">
+    See how fees are calculated and displayed in proofs
+  </Card>
+</CardGroup>

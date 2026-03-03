@@ -1,0 +1,298 @@
+---
+title: Environment variables
+description: Configure environment variables for PayOnProof services
+---
+
+PayOnProof requires environment variables for both the API and web services. This guide covers all available configuration options.
+
+## API service variables
+
+Create a `.env` file in `services/api/` based on `.env.example`.
+
+### Environment mode
+
+<ResponseField name="POP_ENV" type="string" default="staging">
+  Environment mode for the application.
+  - `production` - Use mainnet-compatible anchor domains
+  - `staging` - Use testnet-compatible mappings
+</ResponseField>
+
+### Stellar network
+
+<ResponseField name="STELLAR_HORIZON_URL" type="string" required>
+  Stellar Horizon API endpoint.
+  
+  **Testnet:** `https://horizon-testnet.stellar.org`
+  
+  **Mainnet:** `https://horizon.stellar.org`
+</ResponseField>
+
+<ResponseField name="STELLAR_NETWORK_PASSPHRASE" type="string" required>
+  Stellar network passphrase.
+  
+  **Testnet:** `Test SDF Network ; September 2015`
+  
+  **Mainnet:** `Public Global Stellar Network ; September 2015`
+</ResponseField>
+
+<ResponseField name="STELLAR_ESCROW_SECRET" type="string">
+  Stellar account secret key for escrow operations. Optional for diagnostics.
+  
+  <Warning>
+    Never commit this value to version control. Keep it secure.
+  </Warning>
+</ResponseField>
+
+### Anchor discovery and sync
+
+<ResponseField name="STELLAR_ANCHOR_DIRECTORY_URL" type="string">
+  URL to a machine-readable anchor directory export (JSON/CSV format).
+  
+  Example:
+  ```
+  https://raw.githubusercontent.com/your-org/payonproof/main/services/api/data/anchors-export.json
+  ```
+</ResponseField>
+
+<ResponseField name="ANCHOR_DISCOVERY_MODE" type="string" default="directory">
+  Mode for discovering anchors:
+  - `directory` - Use the directory URL
+  - `horizon` - Discover from Horizon API (recommended for production)
+</ResponseField>
+
+<ResponseField name="ANCHOR_ENABLE_HORIZON_FALLBACK" type="boolean" default="false">
+  Enable fallback to Horizon discovery if directory fails.
+</ResponseField>
+
+<ResponseField name="ANCHOR_DIRECTORY_ALLOWED_DOMAINS" type="string">
+  Comma-separated list of allowed anchor domains for additional security filtering.
+</ResponseField>
+
+<ResponseField name="ANCHOR_TRUST_REQUIRE_SEP10" type="boolean" default="false">
+  Require SEP-10 (Stellar Web Authentication) support for anchors.
+</ResponseField>
+
+<ResponseField name="ANCHOR_TRUST_REQUIRE_SIGNING_KEY" type="boolean" default="false">
+  Require valid signing keys in stellar.toml.
+</ResponseField>
+
+<ResponseField name="ANCHOR_TRUST_REQUIRE_SEP24_OR_SEP31" type="boolean" default="false">
+  Require SEP-24 or SEP-31 support for anchors.
+</ResponseField>
+
+<ResponseField name="ANCHOR_SEP1_404_DISABLE_THRESHOLD" type="number" default="3">
+  Number of consecutive 404 errors on stellar.toml before auto-disabling an anchor.
+</ResponseField>
+
+### Supabase database
+
+<ResponseField name="SUPABASE_URL" type="string" required>
+  Your Supabase project URL.
+  
+  Example: `https://your-project.supabase.co`
+</ResponseField>
+
+<ResponseField name="SUPABASE_SERVICE_ROLE_KEY" type="string" required>
+  Supabase service role key for admin operations.
+  
+  <Warning>
+    This is a sensitive secret. Never expose it to the frontend or commit it to version control.
+  </Warning>
+</ResponseField>
+
+### Application settings
+
+<ResponseField name="API_BASE_URL" type="string" default="http://localhost:3001">
+  Base URL for the API service.
+</ResponseField>
+
+<ResponseField name="WEB_ORIGIN" type="string" default="http://localhost:3000">
+  Origin URL for the web application (used for CORS).
+</ResponseField>
+
+<ResponseField name="CORS_ALLOWED_ORIGINS" type="string" default="http://localhost:3000">
+  Comma-separated list of allowed CORS origins.
+</ResponseField>
+
+<ResponseField name="FX_PROVIDER_URL" type="string" default="https://api.frankfurter.app/latest">
+  Foreign exchange rate provider API URL.
+</ResponseField>
+
+<ResponseField name="FX_FALLBACK_RATE" type="number" default="1">
+  Fallback exchange rate if the FX provider is unavailable.
+</ResponseField>
+
+<ResponseField name="MAX_COMPARE_ROUTES" type="number" default="12">
+  Maximum number of routes to return in comparison endpoint.
+</ResponseField>
+
+### Security secrets (production)
+
+<ResponseField name="EXECUTION_STATE_SECRET" type="string">
+  Secret for encrypting execution state tokens (production only).
+  
+  <Note>
+    Use a strong random string of at least 32 characters.
+  </Note>
+</ResponseField>
+
+<ResponseField name="ANCHOR_CALLBACK_SECRET" type="string">
+  Secret for validating anchor callback requests (production only).
+</ResponseField>
+
+<ResponseField name="CRON_SECRET" type="string">
+  Secret for protecting cron endpoints (production only).
+</ResponseField>
+
+### SEP-24 and SEP-31 settings
+
+<ResponseField name="SEP24_CALLBACK_BASE_URL" type="string">
+  Base URL for SEP-24 callbacks. Defaults to API_BASE_URL if not set.
+</ResponseField>
+
+<ResponseField name="SEP24_CALLBACK_URL_PARAM" type="string" default="callback">
+  URL parameter name for SEP-24 callback URLs.
+</ResponseField>
+
+<ResponseField name="SEP10_CLIENT_DOMAIN" type="string">
+  Domain for SEP-10 client attribution (production only).
+  
+  Example: `app.yourdomain.com`
+</ResponseField>
+
+## Web service variables
+
+Create a `.env.local` file in `services/web/` based on `.env.example`.
+
+<Note>
+  All frontend environment variables must be prefixed with `NEXT_PUBLIC_` to be accessible in the browser.
+</Note>
+
+<ResponseField name="NEXT_PUBLIC_POP_ENV" type="string" default="staging">
+  Environment mode for the frontend.
+  - `production` - Expect Freighter on mainnet
+  - `staging` - Expect Freighter on testnet
+</ResponseField>
+
+<ResponseField name="NEXT_PUBLIC_API_BASE_URL" type="string" required>
+  Base URL for the API service.
+  
+  **Local:** `http://localhost:3001`
+  
+  **Production:** Your deployed API URL (e.g., `https://api.yourdomain.com`)
+</ResponseField>
+
+<ResponseField name="NEXT_PUBLIC_APP_URL" type="string" required>
+  Base URL for the web application.
+  
+  **Local:** `http://localhost:3000`
+  
+  **Production:** Your deployed web URL (e.g., `https://app.yourdomain.com`)
+</ResponseField>
+
+<ResponseField name="NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE" type="string">
+  Optional explicit network passphrase override. Usually inherited from `NEXT_PUBLIC_POP_ENV`.
+</ResponseField>
+
+## Environment file examples
+
+<CodeGroup>
+```bash API - Development
+# services/api/.env
+POP_ENV=staging
+
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+STELLAR_ESCROW_SECRET=your_testnet_secret_key
+
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+API_BASE_URL=http://localhost:3001
+WEB_ORIGIN=http://localhost:3000
+CORS_ALLOWED_ORIGINS=http://localhost:3000
+
+ANCHOR_DISCOVERY_MODE=directory
+ANCHOR_ENABLE_HORIZON_FALLBACK=false
+```
+
+```bash API - Production
+# services/api/.env
+POP_ENV=production
+
+WEB_ORIGIN=https://app.yourdomain.com
+CORS_ALLOWED_ORIGINS=https://app.yourdomain.com
+SEP10_CLIENT_DOMAIN=app.yourdomain.com
+
+EXECUTION_STATE_SECRET=your_long_random_secret_32_chars_min
+ANCHOR_CALLBACK_SECRET=your_long_random_secret_32_chars_min
+CRON_SECRET=your_long_random_secret_32_chars_min
+
+STELLAR_HORIZON_URL=https://horizon.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Public Global Stellar Network ; September 2015
+
+ANCHOR_DISCOVERY_MODE=directory
+ANCHOR_ENABLE_HORIZON_FALLBACK=true
+
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+MAX_COMPARE_ROUTES=12
+FX_PROVIDER_URL=https://api.frankfurter.app/latest
+FX_FALLBACK_RATE=1
+```
+
+```bash Web - Development
+# services/web/.env.local
+NEXT_PUBLIC_POP_ENV=staging
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+```bash Web - Production
+# services/web/.env.local
+NEXT_PUBLIC_POP_ENV=production
+NEXT_PUBLIC_API_BASE_URL=https://api.yourdomain.com
+NEXT_PUBLIC_APP_URL=https://app.yourdomain.com
+```
+</CodeGroup>
+
+## Security best practices
+
+<Warning>
+  **Never commit secrets to version control**
+  
+  - Add `.env` and `.env.local` to `.gitignore`
+  - Use `.env.example` files as templates
+  - Store production secrets in your deployment platform (Vercel, etc.)
+</Warning>
+
+<Note>
+  **Frontend vs Backend secrets**
+  
+  - Never expose service-role keys as `NEXT_PUBLIC_*` variables
+  - Never expose private keys or signing secrets to the frontend
+  - Frontend should only call backend REST endpoints
+</Note>
+
+## Verifying configuration
+
+After setting up environment variables, verify your configuration:
+
+```bash
+# API service
+cd services/api
+npm run dev
+# Check console output for configuration errors
+
+# Web service
+cd services/web
+npm run dev
+# Visit http://localhost:3000
+```
+
+## Next steps
+
+- [Set up the database](/deployment/database-setup)
+- [Deploy to Vercel](/deployment/vercel-deployment)
+- [Configure anchor catalog sync](/deployment/anchor-catalog-sync)

@@ -1,0 +1,193 @@
+---
+title: Catalog
+description: List and filter Stellar anchors in the PayOnProof catalog
+---
+
+<RequestExample>
+
+```bash cURL
+curl https://api.payonproof.com/api/anchors/catalog
+```
+
+```bash cURL (filter operational only)
+curl "https://api.payonproof.com/api/anchors/catalog?operationalOnly=true"
+```
+
+```bash cURL (filter by country and type)
+curl "https://api.payonproof.com/api/anchors/catalog?country=US&type=on-ramp"
+```
+
+```javascript JavaScript
+const response = await fetch('https://api.payonproof.com/api/anchors/catalog?operationalOnly=true');
+const { anchors } = await response.json();
+```
+
+```python Python
+import requests
+
+response = requests.get(
+  'https://api.payonproof.com/api/anchors/catalog',
+  params={'country': 'PH', 'operationalOnly': 'true'}
+)
+data = response.json()
+```
+
+</RequestExample>
+
+## GET /api/anchors/catalog
+
+Returns a list of active Stellar anchors with their capabilities and operational status.
+
+### Query parameters
+
+<ParamField query="country" type="string">
+  Filter by country code (ISO 3166-1 alpha-2, e.g., "US", "PH"). Case-insensitive.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by anchor type: `on-ramp` or `off-ramp`
+</ParamField>
+
+<ParamField query="operationalOnly" type="boolean" default="false">
+  If `true`, only return anchors with `operational: true` (full SEP-10 and SEP-24 support)
+</ParamField>
+
+### Response
+
+<ResponseField name="anchors" type="array">
+  Array of anchor objects
+  
+  <Expandable title="Anchor object">
+    <ResponseField name="id" type="string">
+      Unique anchor identifier
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Anchor display name
+    </ResponseField>
+    
+    <ResponseField name="domain" type="string">
+      Anchor home domain (e.g., "stellar.moneygram.com")
+    </ResponseField>
+    
+    <ResponseField name="country" type="string">
+      ISO 3166-1 alpha-2 country code
+    </ResponseField>
+    
+    <ResponseField name="currency" type="string">
+      Primary currency code (e.g., "USD", "PHP")
+    </ResponseField>
+    
+    <ResponseField name="type" type="string">
+      Anchor type: "on-ramp" (deposit) or "off-ramp" (withdraw)
+    </ResponseField>
+    
+    <ResponseField name="operational" type="boolean">
+      Whether anchor is fully operational (has SEP-10 and SEP-24 endpoints)
+    </ResponseField>
+    
+    <ResponseField name="sep" type="object">
+      Stellar Ecosystem Proposal support flags
+      <Expandable title="SEP capabilities">
+        <ResponseField name="sep10" type="boolean">SEP-10 authentication support</ResponseField>
+        <ResponseField name="sep24" type="boolean">SEP-24 interactive deposits/withdrawals</ResponseField>
+        <ResponseField name="sep6" type="boolean">SEP-6 programmatic deposits/withdrawals</ResponseField>
+        <ResponseField name="sep31" type="boolean">SEP-31 cross-border payments</ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="lastCheckedAt" type="string">
+      ISO 8601 timestamp of last capability check
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Response example
+
+```json
+{
+  "anchors": [
+    {
+      "id": "anchor_moneygram_us",
+      "name": "MoneyGram",
+      "domain": "stellar.moneygram.com",
+      "country": "US",
+      "currency": "USD",
+      "type": "on-ramp",
+      "operational": true,
+      "sep": {
+        "sep10": true,
+        "sep24": true,
+        "sep6": false,
+        "sep31": false
+      },
+      "lastCheckedAt": "2026-03-03T10:30:00.000Z"
+    },
+    {
+      "id": "anchor_ph_example",
+      "name": "Philippines Digital Bank",
+      "domain": "anchor.example.ph",
+      "country": "PH",
+      "currency": "PHP",
+      "type": "off-ramp",
+      "operational": true,
+      "sep": {
+        "sep10": true,
+        "sep24": true,
+        "sep6": true,
+        "sep31": false
+      },
+      "lastCheckedAt": "2026-03-03T09:15:00.000Z"
+    }
+  ]
+}
+```
+
+### Error responses
+
+**405 Method Not Allowed**
+
+```json
+{
+  "error": "Method not allowed"
+}
+```
+
+**500 Internal Server Error**
+
+```json
+{
+  "error": "Failed to retrieve anchor catalog"
+}
+```
+
+## Filtering examples
+
+### Operational US on-ramps
+
+```bash
+curl "https://api.payonproof.com/api/anchors/catalog?country=US&type=on-ramp&operationalOnly=true"
+```
+
+### All Philippine anchors
+
+```bash
+curl "https://api.payonproof.com/api/anchors/catalog?country=PH"
+```
+
+### SEP-24 enabled anchors
+
+```javascript
+const { anchors } = await fetch('/api/anchors/catalog?operationalOnly=true')
+  .then(r => r.json());
+
+const sep24Anchors = anchors.filter(a => a.sep.sep24);
+```
+
+## Implementation notes
+
+- Anchors are sourced from the Stellar anchor directory and Horizon network
+- Capabilities are refreshed periodically via background jobs
+- `operational: true` requires both SEP-10 (authentication) and SEP-24 (interactive flows)
+- Invalid filter values (e.g., `type=invalid`) will exclude all results for that filter
+- Country codes are normalized to uppercase for comparison
